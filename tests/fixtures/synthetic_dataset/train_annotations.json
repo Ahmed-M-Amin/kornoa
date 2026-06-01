@@ -1,0 +1,12 @@
+{
+  "images": [
+    {"id": "img_001", "file_name": "img_001.jpg", "width": 100, "height": 100},
+    {"id": "img_002", "file_name": "img_002.jpg", "width": 100, "height": 100}
+  ],
+  "annotations": [
+    {"id": 1, "image_id": "img_001", "category_id": 1, "bbox": [10, 10, 50, 50], "area": 2500, "iscrowd": 0}
+  ],
+  "categories": [
+    {"id": 1, "name": "defect"}
+  ]
+}

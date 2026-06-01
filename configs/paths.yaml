@@ -1,0 +1,7 @@
+dataset:
+  root: "tests/fixtures/synthetic_dataset"
+  train_csv: "train.csv"
+  sample_submission: "sample_submission.csv"
+  train_images: "train_images"
+  test_images: "test_images"
+  train_annotations: "train_annotations.json"

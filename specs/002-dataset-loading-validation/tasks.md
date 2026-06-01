@@ -22,11 +22,11 @@ description: "Task list for SPEC-002 Dataset Loading and Validation"
 
 **Purpose**: Establish shared package/config/test files needed by every dataset loading story.
 
-- [ ] T001 Create data package marker in `src/data/__init__.py`
-- [ ] T002 Create utility package marker in `src/utils/__init__.py`
-- [ ] T003 Create initial configurable dataset paths template in `configs/paths.yaml`
-- [ ] T004 Create synthetic dataset fixture directory structure in `tests/fixtures/synthetic_dataset/train_images/` and `tests/fixtures/synthetic_dataset/test_images/`
-- [ ] T005 Update `requirements.txt` with `matplotlib` and `Pillow`, keeping existing `opencv-python` if already present
+- [X] T001 Create data package marker in `src/data/__init__.py`
+- [X] T002 Create utility package marker in `src/utils/__init__.py`
+- [X] T003 Create initial configurable dataset paths template in `configs/paths.yaml`
+- [X] T004 Create synthetic dataset fixture directory structure in `tests/fixtures/synthetic_dataset/train_images/` and `tests/fixtures/synthetic_dataset/test_images/`
+- [X] T005 Update `requirements.txt` with `matplotlib` and `Pillow`, keeping existing `opencv-python` if already present
 
 ---
 
@@ -36,12 +36,12 @@ description: "Task list for SPEC-002 Dataset Loading and Validation"
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T006 Write failing config loader tests for valid, missing, and malformed path configs in `tests/test_dataset.py`
-- [ ] T007 Implement YAML config loading and readable config errors in `src/utils/config.py`
-- [ ] T008 [P] Create synthetic `train.csv` with reusable and not-reusable rows in `tests/fixtures/synthetic_dataset/train.csv`
-- [ ] T009 [P] Create synthetic `sample_submission.csv` in `tests/fixtures/synthetic_dataset/sample_submission.csv`
-- [ ] T010 [P] Create synthetic audit-only COCO metadata in `tests/fixtures/synthetic_dataset/train_annotations.json`
-- [ ] T011 [P] Create valid small PNG or JPEG train/test image files with known dimensions in `tests/fixtures/synthetic_dataset/train_images/` and `tests/fixtures/synthetic_dataset/test_images/`
+- [X] T006 Write failing config loader tests for valid, missing, and malformed path configs in `tests/test_dataset.py`
+- [X] T007 Implement YAML config loading and readable config errors in `src/utils/config.py`
+- [X] T008 [P] Create synthetic `train.csv` with reusable and not-reusable rows in `tests/fixtures/synthetic_dataset/train.csv`
+- [X] T009 [P] Create synthetic `sample_submission.csv` in `tests/fixtures/synthetic_dataset/sample_submission.csv`
+- [X] T010 [P] Create synthetic audit-only COCO metadata in `tests/fixtures/synthetic_dataset/train_annotations.json`
+- [X] T011 [P] Create valid small PNG or JPEG train/test image files with known dimensions in `tests/fixtures/synthetic_dataset/train_images/` and `tests/fixtures/synthetic_dataset/test_images/`
 
 **Checkpoint**: Config loading and synthetic test data are ready for user-story tests.
 
