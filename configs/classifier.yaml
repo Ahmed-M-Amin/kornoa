@@ -1,0 +1,4 @@
+classifier:
+  model_name: "placeholder"
+  num_classes: 2
+  image_size: 224

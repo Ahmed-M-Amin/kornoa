@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-specs/002-dataset-loading-validation/plan.md
+specs/003-coco-annotation-parser/plan.md
 <!-- SPECKIT END -->

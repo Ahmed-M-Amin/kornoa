@@ -55,15 +55,15 @@ description: "Task list for SPEC-002 Dataset Loading and Validation"
 
 ### Tests for User Story 1
 
-- [ ] T012 [US1] Write failing required file/folder presence tests in `tests/test_dataset.py`
-- [ ] T013 [US1] Write failing missing required item diagnostic tests in `tests/test_dataset.py`
+- [X] T012 [US1] Write failing required file/folder presence tests in `tests/test_dataset.py`
+- [X] T013 [US1] Write failing missing required item diagnostic tests in `tests/test_dataset.py`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Implement dataset root and required path resolution in `src/data/dataset.py`
-- [ ] T015 [US1] Implement required file/folder validation with readable missing-item diagnostics in `src/data/dataset.py`
-- [ ] T016 [US1] Add CLI entry behavior for dataset presence checks in `src/data/audit.py`
-- [ ] T017 [US1] Run User Story 1 checks with `pytest tests/test_dataset.py -q`
+- [X] T014 [US1] Implement dataset root and required path resolution in `src/data/dataset.py`
+- [X] T015 [US1] Implement required file/folder validation with readable missing-item diagnostics in `src/data/dataset.py`
+- [X] T016 [US1] Add CLI entry behavior for dataset presence checks in `src/data/audit.py`
+- [X] T017 [US1] Run User Story 1 checks with `pytest tests/test_dataset.py -q`
 
 **Checkpoint**: User Story 1 is complete when required dataset files/folders are verified from config and missing items fail loudly.
 
@@ -77,20 +77,20 @@ description: "Task list for SPEC-002 Dataset Loading and Validation"
 
 ### Tests for User Story 2
 
-- [ ] T018 [US2] Write failing training label parsing and binary target validation tests in `tests/test_dataset.py`
-- [ ] T019 [US2] Write failing train/test image discovery tests in `tests/test_dataset.py`
-- [ ] T020 [US2] Write failing label-to-image matching and present-unreferenced image tests in `tests/test_dataset.py`
-- [ ] T021 [US2] Write failing audit-only annotation coverage and orphaned annotation tests in `tests/test_dataset_audit.py`
-- [ ] T022 [US2] Write failing image-size summary tests using known-dimension synthetic images in `tests/test_dataset_audit.py`
+- [X] T018 [US2] Write failing training label parsing and binary target validation tests in `tests/test_dataset.py`
+- [X] T019 [US2] Write failing train/test image discovery tests in `tests/test_dataset.py`
+- [X] T020 [US2] Write failing label-to-image matching and present-unreferenced image tests in `tests/test_dataset.py`
+- [X] T021 [US2] Write failing audit-only annotation coverage and orphaned annotation tests in `tests/test_dataset_audit.py`
+- [X] T022 [US2] Write failing image-size summary tests using known-dimension synthetic images in `tests/test_dataset_audit.py`
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Implement training label loading and binary target validation in `src/data/dataset.py`
-- [ ] T024 [US2] Implement train/test image discovery in `src/data/dataset.py`
-- [ ] T025 [US2] Implement label-to-image matching and present-unreferenced image reporting in `src/data/dataset.py`
-- [ ] T026 [US2] Implement audit-only COCO metadata summary for coverage, categories, ROI availability, and orphaned annotations in `src/data/audit.py`
-- [ ] T027 [US2] Implement image metadata reading and image-size summary in `src/data/audit.py`
-- [ ] T028 [US2] Run User Story 2 checks with `pytest tests/test_dataset.py tests/test_dataset_audit.py -q`
+- [X] T023 [US2] Implement training label loading and binary target validation in `src/data/dataset.py`
+- [X] T024 [US2] Implement train/test image discovery in `src/data/dataset.py`
+- [X] T025 [US2] Implement label-to-image matching and present-unreferenced image reporting in `src/data/dataset.py`
+- [X] T026 [US2] Implement audit-only COCO metadata summary for coverage, categories, ROI availability, and orphaned annotations in `src/data/audit.py`
+- [X] T027 [US2] Implement image metadata reading and image-size summary in `src/data/audit.py`
+- [X] T028 [US2] Run User Story 2 checks with `pytest tests/test_dataset.py tests/test_dataset_audit.py -q`
 
 **Checkpoint**: User Story 2 is complete when dataset integrity issues are counted, summarized, and reported without creating test labels.
 
@@ -104,19 +104,19 @@ description: "Task list for SPEC-002 Dataset Loading and Validation"
 
 ### Tests for User Story 3
 
-- [ ] T029 [US3] Write failing dataset summary report generation tests in `tests/test_dataset_audit.py`
-- [ ] T030 [US3] Write failing class and defect distribution output tests in `tests/test_dataset_audit.py`
-- [ ] T031 [US3] Write failing audit figure output tests for class distribution, defect distribution, and sample grid in `tests/test_dataset_audit.py`
-- [ ] T032 [US3] Write failing generated artifact confidentiality tests that verify generated files in `outputs/reports/` and `outputs/figures/` are ignored and not tracked in `tests/test_dataset_audit.py`
+- [X] T029 [US3] Write failing dataset summary report generation tests in `tests/test_dataset_audit.py`
+- [X] T030 [US3] Write failing class and defect distribution output tests in `tests/test_dataset_audit.py`
+- [X] T031 [US3] Write failing audit figure output tests for class distribution, defect distribution, and sample grid in `tests/test_dataset_audit.py`
+- [X] T032 [US3] Write failing generated artifact confidentiality tests that verify generated files in `outputs/reports/` and `outputs/figures/` are ignored and not tracked in `tests/test_dataset_audit.py`
 
 ### Implementation for User Story 3
 
-- [ ] T033 [US3] Implement CSV report generation for dataset summary, missing files, orphaned annotations, class distribution, defect distribution, and image-size summary in `src/data/audit.py`
-- [ ] T034 [US3] Implement class distribution, defect distribution, and sample grid figure generation in `src/data/audit.py`
-- [ ] T035 [US3] Implement audit output directory creation under `outputs/reports/` and `outputs/figures/` in `src/data/audit.py`
-- [ ] T036 [US3] Implement generated-output ignore validation helpers for `outputs/reports/` and `outputs/figures/` in `src/data/audit.py`
-- [ ] T037 [US3] Update dataset audit notebook to call reusable audit behavior in `notebooks/01_dataset_audit.ipynb`
-- [ ] T038 [US3] Run User Story 3 checks with `pytest tests/test_dataset_audit.py -q`
+- [X] T033 [US3] Implement CSV report generation for dataset summary, missing files, orphaned annotations, class distribution, defect distribution, and image-size summary in `src/data/audit.py`
+- [X] T034 [US3] Implement class distribution, defect distribution, and sample grid figure generation in `src/data/audit.py`
+- [X] T035 [US3] Implement audit output directory creation under `outputs/reports/` and `outputs/figures/` in `src/data/audit.py`
+- [X] T036 [US3] Implement generated-output ignore validation helpers for `outputs/reports/` and `outputs/figures/` in `src/data/audit.py`
+- [X] T037 [US3] Update dataset audit notebook to call reusable audit behavior in `notebooks/01_dataset_audit.ipynb`
+- [X] T038 [US3] Run User Story 3 checks with `pytest tests/test_dataset_audit.py -q`
 
 **Checkpoint**: User Story 3 is complete when report and figure artifacts are generated from synthetic data in approved output locations.
 
@@ -126,12 +126,12 @@ description: "Task list for SPEC-002 Dataset Loading and Validation"
 
 **Purpose**: Validate the full feature against the contract, quickstart, and constitution.
 
-- [ ] T039 Validate implemented behavior against `specs/002-dataset-loading-validation/contracts/dataset-audit-contract.md`
-- [ ] T040 Run quickstart automated tests with `pytest tests/test_dataset.py tests/test_dataset_audit.py -q`
-- [ ] T041 When valid private dataset access is available, run configured private dataset audit command from quickstart with `python -m src.data.audit --config configs/paths.yaml`; otherwise run synthetic fixture validation only
-- [ ] T042 When valid private dataset access is available, record dataset audit runtime and whether it is under the five-minute target in `outputs/reports/dataset_summary.csv`; otherwise document that only synthetic fixture runtime was validated
-- [ ] T043 Confirm private dataset files and generated audit artifacts are not tracked using `git ls-files`, and confirm files generated under `outputs/reports/` and `outputs/figures/` are ignored using `git status --short --ignored`
-- [ ] T044 Update `docs/krones-final-implementation-plan.md` only if SPEC-002 implementation changes the approved Phase 2 behavior
+- [X] T039 Validate implemented behavior against `specs/002-dataset-loading-validation/contracts/dataset-audit-contract.md`
+- [X] T040 Run quickstart automated tests with `pytest tests/test_dataset.py tests/test_dataset_audit.py -q`
+- [X] T041 When valid private dataset access is available, run configured private dataset audit command from quickstart with `python -m src.data.audit --config configs/paths.yaml`; otherwise run synthetic fixture validation only
+- [X] T042 When valid private dataset access is available, record dataset audit runtime and whether it is under the five-minute target in `outputs/reports/dataset_summary.csv`; otherwise document that only synthetic fixture runtime was validated
+- [X] T043 Confirm private dataset files and generated audit artifacts are not tracked using `git ls-files`, and confirm files generated under `outputs/reports/` and `outputs/figures/` are ignored using `git status --short --ignored`
+- [X] T044 Update `docs/krones-final-implementation-plan.md` only if SPEC-002 implementation changes the approved Phase 2 behavior
 
 ---
 

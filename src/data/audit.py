@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import argparse
 import json
 import subprocess
 import time
@@ -11,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw
+
+from src.utils.config import load_config
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
@@ -299,3 +302,34 @@ def _run_git(args: list[str]) -> list[str]:
     if completed.returncode not in (0, 1):
         raise RuntimeError(completed.stderr.strip())
     return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+
+
+def main() -> int:
+    """Run the dataset audit from the command line."""
+    parser = argparse.ArgumentParser(description="Run dataset audit checks.")
+    parser.add_argument("--config", default="configs/paths.yaml")
+    parser.add_argument("--output-root", default="outputs")
+    parser.add_argument("--no-outputs", action="store_true")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    dataset_root = config.get("dataset", {}).get("root")
+    if not dataset_root:
+        raise ValueError(f"Missing dataset.root in {args.config}")
+
+    result = run_dataset_audit(
+        dataset_root,
+        output_root=args.output_root,
+        generate_outputs=not args.no_outputs,
+    )
+    print(
+        "Dataset audit complete: "
+        f"{result['train_label_count']} labels, "
+        f"{result['train_image_count']} train images, "
+        f"{result['test_image_count']} test images"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
