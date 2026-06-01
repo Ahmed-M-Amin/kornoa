@@ -1,0 +1,62 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+*.env
+.env.*
+secrets.*
+*.key
+
+# Dataset - DO NOT COMMIT
+1st-krones-vision-ai-challenge/
+train_images/
+test_images/
+train_annotations.json
+train.csv
+sample_submission.csv
+
+# Outputs / generated artifacts
+outputs/*
+!outputs/.gitignore
+
+# Model weights / binaries
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.engine
+*.pkl
+*.joblib
+
+# Logs
+logs/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Local OpenCode / agent runtime
+.opencode/
+opencode.json
+
+# Local API / secrets
+open-api.py
+.env
+*.env
+*.key
+secrets.*
+
+# Local MCP SQLite memory
+datei/*.db
+datei/*.sqlite
+datei/*.sqlite3
