@@ -60,3 +60,5 @@ secrets.*
 datei/*.db
 datei/*.sqlite
 datei/*.sqlite3
+
+.agents/
