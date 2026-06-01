@@ -1,0 +1,8 @@
+{
+  "annotations": [
+    {"id": 1, "image_id": "img_001", "category_id": 1, "bbox": [10, 10, 50, 50], "area": 2500, "iscrowd": 0}
+  ],
+  "categories": [
+    {"id": 1, "name": "defect"}
+  ]
+}
