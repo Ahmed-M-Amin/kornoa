@@ -11,3 +11,6 @@ classifier:
   device: "auto"
   learning_rate: 0.001
   weight_decay: 0.01
+  max_train_samples:
+  max_val_samples:
+  log_every_n_batches: 25

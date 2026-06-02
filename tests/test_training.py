@@ -18,6 +18,8 @@ from src.training.threshold_search import find_best_threshold
 from src.training.train_classifier import (
     DEFAULT_MODEL_OUTPUT,
     DEFAULT_PREDICTIONS_OUTPUT,
+    DEFAULT_LABEL_DISTRIBUTION_OUTPUT,
+    DEFAULT_SPLIT_DISTRIBUTION_OUTPUT,
     DEFAULT_THRESHOLD_OUTPUT,
     DEFAULT_METRICS_OUTPUT,
     TrainingRunConfig,
@@ -180,6 +182,26 @@ def test_training_dataloaders_use_configured_batch_size_and_split_order(tmp_path
     assert len(validation_image_ids) == len(split.validation)
     assert loaders.train.batch_size == 3
     assert loaders.validation.batch_size == 3
+    assert type(loaders.train.sampler).__name__ == "RandomSampler"
+    assert type(loaders.validation.sampler).__name__ == "SequentialSampler"
+
+
+def test_debug_sample_limits_preserve_stratified_split(tmp_path):
+    dataset_root = _make_dataset(tmp_path, labels=[0] * 8 + [1] * 8)
+    examples = load_training_examples(dataset_root)
+
+    split = make_stratified_split(
+        examples,
+        validation_split=0.25,
+        seed=42,
+        max_train_samples=4,
+        max_val_samples=2,
+    )
+
+    assert len(split.train) == 4
+    assert len(split.validation) == 2
+    assert {item.label for item in split.train} == {0, 1}
+    assert {item.label for item in split.validation} == {0, 1}
 
 
 def test_training_device_selection_supports_explicit_cpu():
@@ -203,6 +225,50 @@ def test_synthetic_training_metrics_record_device(tmp_path):
 
     metrics = json.loads(result.metrics_path.read_text(encoding="utf-8"))
     assert metrics["device"] == "cpu"
+
+
+def test_distribution_reports_are_saved(tmp_path):
+    dataset_root = _make_dataset(tmp_path)
+    output_root = _output_root(tmp_path)
+
+    result = run_training(
+        dataset_root=dataset_root,
+        output_root=output_root,
+        config=TrainingRunConfig(device="cpu", num_workers=0),
+        synthetic_smoke=True,
+        seed=42,
+        epochs=1,
+    )
+
+    label_distribution = json.loads(result.label_distribution_path.read_text(encoding="utf-8"))
+    split_distribution = json.loads(result.split_distribution_path.read_text(encoding="utf-8"))
+    assert label_distribution["total_rows"] == 10
+    assert label_distribution["label_counts"] == {"0": 5, "1": 5}
+    assert split_distribution["train"]["count"] == len(result.split.train)
+    assert split_distribution["validation"]["count"] == len(result.split.validation)
+    assert split_distribution["train"]["label_counts"] == {"0": 4, "1": 4}
+    assert split_distribution["validation"]["label_counts"] == {"0": 1, "1": 1}
+
+
+def test_progress_logging_does_not_break_training(tmp_path, capsys):
+    dataset_root = _make_dataset(tmp_path)
+    output_root = _output_root(tmp_path)
+
+    run_training(
+        dataset_root=dataset_root,
+        output_root=output_root,
+        config=TrainingRunConfig(device="cpu", num_workers=0, log_every_n_batches=1),
+        synthetic_smoke=True,
+        seed=42,
+        epochs=1,
+    )
+
+    captured = capsys.readouterr()
+    assert "Training start" in captured.out
+    assert "DataLoader created" in captured.out
+    assert "epoch=1 batch=1" in captured.out
+    assert "validation_f1=" in captured.out
+    assert "total_runtime_seconds=" in captured.out
 
 
 def test_class_weights_are_calculated_from_train_split_only(tmp_path):
@@ -277,7 +343,14 @@ def test_synthetic_training_smoke_saves_minimal_artifacts_under_one_minute(tmp_p
 
 
 def test_generated_training_artifacts_are_ignored_when_under_outputs():
-    paths = [DEFAULT_MODEL_OUTPUT, DEFAULT_METRICS_OUTPUT, DEFAULT_THRESHOLD_OUTPUT, DEFAULT_PREDICTIONS_OUTPUT]
+    paths = [
+        DEFAULT_MODEL_OUTPUT,
+        DEFAULT_METRICS_OUTPUT,
+        DEFAULT_THRESHOLD_OUTPUT,
+        DEFAULT_PREDICTIONS_OUTPUT,
+        DEFAULT_LABEL_DISTRIBUTION_OUTPUT,
+        DEFAULT_SPLIT_DISTRIBUTION_OUTPUT,
+    ]
 
     confidentiality = validate_generated_artifact_confidentiality(paths)
 
