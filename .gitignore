@@ -108,3 +108,5 @@ opencode.json
 datei/*.db
 datei/*.sqlite
 datei/*.sqlite3
+
+configs/paths_local*.yaml
