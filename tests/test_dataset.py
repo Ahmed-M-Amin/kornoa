@@ -61,7 +61,21 @@ def test_required_path_validation_reports_exact_missing_items(tmp_path):
 def test_train_csv_loading_validates_binary_targets(tmp_path):
     rows = load_train_labels(FIXTURE_ROOT / "train.csv")
 
-    assert [row["label"] for row in rows] == ["1", "0", "1", "0"]
+    assert [row["target"] for row in rows] == ["1", "0", "1", "0"]
+
+    official_csv = tmp_path / "official_train.csv"
+    with official_csv.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["image_id", "target"])
+        writer.writeheader()
+        writer.writerow({"image_id": "img_001.png", "target": "1"})
+        writer.writerow({"image_id": "img_002.png", "target": "0"})
+
+    official_rows = load_train_labels(official_csv)
+
+    assert official_rows == [
+        {"image_id": "img_001.png", "target": "1"},
+        {"image_id": "img_002.png", "target": "0"},
+    ]
 
     invalid_csv = tmp_path / "train.csv"
     with invalid_csv.open("w", newline="", encoding="utf-8") as handle:
@@ -73,17 +87,46 @@ def test_train_csv_loading_validates_binary_targets(tmp_path):
         load_train_labels(invalid_csv)
 
 
+def test_train_csv_requires_image_id_and_target_or_label(tmp_path):
+    missing_target_csv = tmp_path / "train.csv"
+    missing_target_csv.write_text("image_id,status\nimg_001,1\n", encoding="utf-8")
+
+    with pytest.raises(DatasetValidationError, match="image_id and one of target/label columns"):
+        load_train_labels(missing_target_csv)
+
+
 def test_train_and_test_image_discovery_uses_supported_suffixes():
     train_images = discover_images(FIXTURE_ROOT / "train_images")
     test_images = discover_images(FIXTURE_ROOT / "test_images")
 
     assert [image.image_id for image in train_images] == [
-        "img_001",
-        "img_002",
-        "img_003",
-        "img_004",
+        "img_001.jpg",
+        "img_002.jpg",
+        "img_003.jpg",
+        "img_004.jpg",
     ]
-    assert [image.image_id for image in test_images] == ["img_005", "img_006"]
+    assert [image.image_id for image in test_images] == ["img_005.jpg", "img_006.jpg"]
+
+
+def test_dataset_audit_matches_real_style_full_png_filenames(tmp_path):
+    dataset_root = tmp_path / "dataset"
+    train_dir = dataset_root / "train_images"
+    test_dir = dataset_root / "test_images"
+    train_dir.mkdir(parents=True)
+    test_dir.mkdir()
+    image_id = "ad0f5a12-93fe-4ebb-9aae-ef12ef5246f8_000000000001.png"
+    (dataset_root / "sample_submission.csv").write_text("image_id,target\nimg_005.png,0\n", encoding="utf-8")
+    (dataset_root / "train.csv").write_text(f"image_id,target\n {image_id} ,1\n", encoding="utf-8")
+    (train_dir / image_id).write_bytes(b"placeholder")
+    (test_dir / "img_005.png").write_bytes(b"placeholder")
+
+    report = audit_dataset(dataset_root)
+
+    assert report.train_rows == [{"image_id": image_id, "target": "1"}]
+    assert report.train_images[0].image_id == image_id
+    assert report.train_images[0].path == train_dir / image_id
+    assert report.missing_train_images == []
+    assert report.unreferenced_train_images == []
 
 
 def test_dataset_audit_matches_labels_to_images_and_reports_unreferenced(tmp_path):
@@ -96,7 +139,7 @@ def test_dataset_audit_matches_labels_to_images_and_reports_unreferenced(tmp_pat
         "image_id,label\nimg_005,0\n", encoding="utf-8"
     )
     (dataset_root / "train.csv").write_text(
-        "image_id,label\nimg_001,1\nimg_missing,0\n", encoding="utf-8"
+        "image_id,target\nimg_001.jpg,1\nimg_missing.jpg,0\n", encoding="utf-8"
     )
     for image_name in ["img_001.jpg", "img_extra.jpg"]:
         (train_dir / image_name).write_bytes(b"placeholder")
@@ -104,5 +147,5 @@ def test_dataset_audit_matches_labels_to_images_and_reports_unreferenced(tmp_pat
 
     report = audit_dataset(dataset_root)
 
-    assert report.missing_train_images == ["img_missing"]
-    assert report.unreferenced_train_images == ["img_extra"]
+    assert report.missing_train_images == ["img_missing.jpg"]
+    assert report.unreferenced_train_images == ["img_extra.jpg"]

@@ -13,6 +13,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
+from src.data.dataset import load_train_labels
 from src.utils.config import load_config
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
@@ -28,19 +29,19 @@ def run_dataset_audit(
     dataset_root = Path(dataset_root)
     output_root = Path(output_root)
 
-    train_rows = _read_csv_rows(dataset_root / "train.csv")
+    train_rows = load_train_labels(dataset_root / "train.csv")
     annotations = _read_coco_annotations(dataset_root / "train_annotations.json")
     train_images = _discover_images(dataset_root / "train_images", "train")
     test_images = _discover_images(dataset_root / "test_images", "test")
 
-    class_distribution = Counter(str(row["label"]) for row in train_rows)
+    class_distribution = Counter(str(row["target"]) for row in train_rows)
     annotation_summary = _summarize_annotations(annotations)
     image_size_summary = train_images + test_images
 
     missing_train_images = [
         row["image_id"]
         for row in train_rows
-        if f"{row['image_id']}.jpg" not in {image["file_name"] for image in train_images}
+        if row["image_id"] not in {image["file_name"] for image in train_images}
     ]
 
     result: dict[str, Any] = {
@@ -108,7 +109,7 @@ def _discover_images(image_dir: Path, split: str) -> list[dict[str, Any]]:
         images.append(
             {
                 "split": split,
-                "image_id": image_path.stem,
+                "image_id": image_path.name,
                 "file_name": image_path.name,
                 "width": width,
                 "height": height,

@@ -103,24 +103,34 @@ def load_train_labels(train_csv_path: str | Path) -> list[dict[str, str]]:
 
     if not rows:
         raise DatasetValidationError("train.csv contains no rows")
-    if not {"image_id", "label"}.issubset(rows[0].keys()):
-        raise DatasetValidationError("train.csv must contain image_id and label columns")
+    fieldnames = set(rows[0].keys())
+    if "image_id" not in fieldnames or not ({"target", "label"} & fieldnames):
+        raise DatasetValidationError("train.csv must contain image_id and one of target/label columns")
 
-    invalid = [row for row in rows if row["label"] not in {"0", "1"}]
+    target_column = "target" if "target" in fieldnames else "label"
+    normalized_rows = [
+        {
+            "image_id": row.get("image_id", "").strip(),
+            "target": row.get(target_column, "").strip(),
+        }
+        for row in rows
+    ]
+
+    invalid = [row for row in normalized_rows if row["target"] not in {"0", "1"}]
     if invalid:
         invalid_ids = [row.get("image_id", "") for row in invalid]
         raise DatasetValidationError(
             "train.csv labels must be binary values 0 or 1: " + ", ".join(invalid_ids)
         )
 
-    return rows
+    return normalized_rows
 
 
 def discover_images(image_dir: str | Path) -> list[ImageFile]:
     """Discover supported image files in a directory."""
     image_dir = Path(image_dir)
     return [
-        ImageFile(image_id=path.stem, file_name=path.name, path=path)
+        ImageFile(image_id=path.name, file_name=path.name, path=path)
         for path in sorted(image_dir.iterdir())
         if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
     ]

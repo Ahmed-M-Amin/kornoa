@@ -1,5 +1,5 @@
-image_id,label
-img_001,1
-img_002,0
-img_003,1
-img_004,0
+image_id,target
+img_001.jpg,1
+img_002.jpg,0
+img_003.jpg,1
+img_004.jpg,0
