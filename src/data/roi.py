@@ -64,6 +64,7 @@ class PreprocessingProfile:
     max_shift_ratio: float = 0.0
     brightness_delta: float = 0.0
     contrast_delta: float = 0.0
+    gamma_delta: float = 0.0
     blur_probability: float = 0.0
     noise_std: float = 0.0
     normalize_mean: Tuple[float, float, float] = (0.485, 0.456, 0.406)

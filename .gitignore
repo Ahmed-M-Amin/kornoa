@@ -110,3 +110,9 @@ datei/*.sqlite
 datei/*.sqlite3
 
 configs/paths_local*.yaml
+
+artifacts/
+outputs/
+*.pth
+*.pt
+*.zip

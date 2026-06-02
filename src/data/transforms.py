@@ -19,11 +19,29 @@ def create_preprocessing_profile(
     *,
     target_size: Tuple[int, int] = DEFAULT_OUTPUT_SIZE,
     seed: Optional[int] = None,
+    augmentation_recipe: str = "v1",
 ) -> PreprocessingProfile:
     """Create a split-specific preprocessing profile."""
 
     if split not in SUPPORTED_SPLITS:
         raise ValueError(f"Unsupported preprocessing split: {split}")
+    if augmentation_recipe not in {"v1", "v2_safe"}:
+        raise ValueError(f"Unsupported augmentation recipe: {augmentation_recipe}")
+
+    if split == "train" and augmentation_recipe == "v2_safe":
+        return PreprocessingProfile(
+            split=split,
+            target_size=target_size,
+            augment=True,
+            seed=seed,
+            max_rotation_degrees=8.0,
+            max_shift_ratio=0.06,
+            brightness_delta=0.18,
+            contrast_delta=0.18,
+            gamma_delta=0.15,
+            blur_probability=0.25,
+            noise_std=5.0,
+        )
 
     if split == "train":
         return PreprocessingProfile(
@@ -35,6 +53,7 @@ def create_preprocessing_profile(
             max_shift_ratio=0.05,
             brightness_delta=0.12,
             contrast_delta=0.12,
+            gamma_delta=0.0,
             blur_probability=0.20,
             noise_std=4.0,
         )
@@ -54,6 +73,7 @@ def apply_preprocessing_transforms(
 
     rng = random.Random(profile.seed)
     result = _adjust_brightness_contrast(result, profile, rng)
+    result = _adjust_gamma(result, profile, rng)
     result = _rotate(result, profile, rng)
     result = _shift(result, profile, rng)
     result = _maybe_blur(result, profile, rng)
@@ -121,3 +141,13 @@ def _add_noise(image: Image.Image, profile: PreprocessingProfile, rng: random.Ra
     noise = noise_rng.normal(0, profile.noise_std, pixels.shape)
     noisy = np.clip(pixels + noise, 0, 255).astype(np.uint8)
     return Image.fromarray(noisy, mode="RGB")
+
+
+def _adjust_gamma(image: Image.Image, profile: PreprocessingProfile, rng: random.Random) -> Image.Image:
+    if profile.gamma_delta <= 0:
+        return image
+    gamma = 1.0 + rng.uniform(-profile.gamma_delta, profile.gamma_delta)
+    gamma = max(0.1, gamma)
+    inverse_gamma = 1.0 / gamma
+    table = [min(255, max(0, int(((value / 255.0) ** inverse_gamma) * 255.0))) for value in range(256)]
+    return image.point(table * 3)

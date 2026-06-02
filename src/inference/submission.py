@@ -10,14 +10,17 @@ from typing import Optional, Sequence
 
 from src.inference.predict import (
     DEFAULT_ARTIFACT_ROOT,
+    DEFAULT_V2_ARTIFACT_ROOT,
     V1InferenceError,
     predict_images,
     resolve_v1_artifact_paths,
+    resolve_v2_artifact_paths,
     resolve_image_paths,
 )
 
 
 DEFAULT_SUBMISSION_OUTPUT = Path("outputs/submissions/submission_v1.csv")
+DEFAULT_V2_SUBMISSION_OUTPUT = Path("outputs/kaggle_v2/submissions/submission_v2.csv")
 
 
 class SubmissionError(V1InferenceError):
@@ -44,10 +47,15 @@ def generate_submission(
     synthetic_smoke: bool = False,
     device: str = "auto",
     batch_size: int = 1,
+    image_size: int = 384,
 ) -> SubmissionReport:
     """Generate a sample-aligned V1 submission CSV."""
 
-    resolved_artifacts = resolve_v1_artifact_paths(artifact_root)
+    resolved_artifacts = (
+        resolve_v2_artifact_paths(artifact_root)
+        if _looks_like_v2_submission(artifact_root, output_path)
+        else resolve_v1_artifact_paths(artifact_root)
+    )
     sample_path, image_dir = _resolve_dataset_inputs(dataset_root, sample_submission_path, test_images_dir)
     sample_rows = _read_sample_submission(sample_path)
     image_ids = [row["image_id"] for row in sample_rows]
@@ -62,6 +70,7 @@ def generate_submission(
             synthetic_smoke=synthetic_smoke,
             device=device,
             batch_size=batch_size,
+            image_size=image_size,
         )
     except V1InferenceError as exc:
         raise SubmissionError(str(exc)) from exc
@@ -74,6 +83,12 @@ def generate_submission(
         for image_id in image_ids:
             writer.writerow({"image_id": image_id, "target": by_id[image_id].target})
     return SubmissionReport(output_path=output, row_count=len(image_ids), artifact_root=resolved_artifacts.artifact_root)
+
+
+def _looks_like_v2_submission(artifact_root: str | Path, output_path: str | Path) -> bool:
+    root = Path(artifact_root)
+    out = Path(output_path)
+    return "kaggle_v2" in root.parts or "kaggle_v2" in out.parts or root == DEFAULT_V2_ARTIFACT_ROOT
 
 
 def _resolve_dataset_inputs(
@@ -121,6 +136,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--synthetic-smoke", action="store_true")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--image-size", type=int, default=384)
     args = parser.parse_args(argv)
 
     report = generate_submission(
@@ -135,6 +151,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         synthetic_smoke=args.synthetic_smoke,
         device=args.device,
         batch_size=args.batch_size,
+        image_size=args.image_size,
     )
     print(f"Generated {report.row_count} submission rows at {report.output_path}")
     return 0

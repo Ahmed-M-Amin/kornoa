@@ -42,12 +42,18 @@ def preprocess_image(
     *,
     split: str,
     seed: Optional[int] = None,
+    augmentation_recipe: str = "v1",
     profile: Optional[PreprocessingProfile] = None,
 ) -> PreprocessingResult:
     """Crop a request and apply split-specific preprocessing."""
 
     crop_result = crop_roi(request)
-    active_profile = profile or create_preprocessing_profile(split, target_size=request.target_size, seed=seed)
+    active_profile = profile or create_preprocessing_profile(
+        split,
+        target_size=request.target_size,
+        seed=seed,
+        augmentation_recipe=augmentation_recipe,
+    )
     image = apply_preprocessing_transforms(crop_result.image, active_profile)
     normalized = normalize_image(image, active_profile)
     return PreprocessingResult(
@@ -64,12 +70,13 @@ def preprocess_pil_image(
     *,
     split: str,
     seed: Optional[int] = None,
+    augmentation_recipe: str = "v1",
     profile: Optional[PreprocessingProfile] = None,
 ) -> PreprocessingResult:
     """Apply preprocessing to a PIL image or path without annotation ROI metadata."""
 
     source = load_image(image)
-    active_profile = profile or create_preprocessing_profile(split, seed=seed)
+    active_profile = profile or create_preprocessing_profile(split, seed=seed, augmentation_recipe=augmentation_recipe)
     output = apply_preprocessing_transforms(source, active_profile)
     normalized = normalize_image(output, active_profile)
     return PreprocessingResult(

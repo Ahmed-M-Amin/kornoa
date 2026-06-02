@@ -1,0 +1,46 @@
+classifier:
+  v2: true
+  experiment_name: "v2a_effnet_b0_recipe"
+  model_name: "efficientnet_b0"
+  num_classes: 2
+  image_size: 384
+  validation_split: 0.2
+  seed: 42
+  epochs: 5
+  batch_size: 4
+  num_workers: 0
+  pin_memory: false
+  device: "auto"
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  max_train_samples:
+  max_val_samples:
+  log_every_n_batches: 25
+  imbalance_strategy: "focal_loss_weighted_sampler"
+  weighted_sampler: true
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  augmentation_recipe: "v2_safe"
+  hard_example_strategy: "analysis_only"
+  speed_ceiling_multiplier: 2.0
+  close_f1_tolerance: 0.002
+
+experiments:
+  - experiment_name: "v2a_effnet_b0_recipe"
+    model_name: "efficientnet_b0"
+    image_size: 384
+  - experiment_name: "v2b_effnet_b1"
+    model_name: "efficientnet_b1"
+    image_size: 384
+  - experiment_name: "v2c_effnet_b2"
+    model_name: "efficientnet_b2"
+    image_size: 384
+  - experiment_name: "v2_optional_convnext_tiny"
+    model_name: "convnext_tiny"
+    image_size: 384
+    optional: true
+  - experiment_name: "v2_optional_448"
+    model_name: "efficientnet_b1"
+    image_size: 448
+    optional: true
+    requires_completed_384_baseline: true
