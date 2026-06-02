@@ -29,6 +29,8 @@ from src.training.threshold_search import ThresholdSearchResult, find_best_thres
 DEFAULT_MODEL_OUTPUT = Path("outputs/models/classifier_effnet_b0_best.pth")
 DEFAULT_METRICS_OUTPUT = Path("outputs/reports/classifier_metrics.json")
 DEFAULT_THRESHOLD_OUTPUT = Path("outputs/reports/best_threshold.json")
+DEFAULT_LABEL_DISTRIBUTION_OUTPUT = Path("outputs/reports/label_distribution.json")
+DEFAULT_SPLIT_DISTRIBUTION_OUTPUT = Path("outputs/reports/split_distribution.json")
 DEFAULT_PREDICTIONS_OUTPUT = Path("outputs/predictions/val_classifier_predictions.csv")
 
 class TrainingValidationError(ValueError):
@@ -58,6 +60,14 @@ class SplitAssignment:
 
 
 @dataclass(frozen=True)
+class TrainingExampleLoadResult:
+    examples: list[TrainingExample]
+    resolved_dataset_root: Path
+    train_csv_row_count: int
+    train_image_count: int
+
+
+@dataclass(frozen=True)
 class TrainingRunConfig:
     model_name: str = "efficientnet_b0"
     image_size: int = 384
@@ -71,6 +81,9 @@ class TrainingRunConfig:
     num_workers: int = 0
     pin_memory: bool = False
     device: str = "auto"
+    max_train_samples: Optional[int] = None
+    max_val_samples: Optional[int] = None
+    log_every_n_batches: int = 25
 
 
 @dataclass(frozen=True)
@@ -93,6 +106,7 @@ class ClassifierMetricsReport:
     best_epoch: int
     device: str
     pos_weight: float
+    class_weights: dict[str, float]
     artifact_paths: dict[str, str]
 
 
@@ -119,6 +133,8 @@ class TrainingRunResult:
     model_path: Path
     metrics_path: Path
     threshold_path: Path
+    label_distribution_path: Path
+    split_distribution_path: Path
     predictions_path: Path
     runtime_seconds: float
 
@@ -174,7 +190,15 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         num_workers=int(cfg.get("num_workers", 0)),
         pin_memory=bool(cfg.get("pin_memory", False)),
         device=str(cfg.get("device", "auto")),
+        max_train_samples=_optional_positive_int(cfg.get("max_train_samples"), "classifier.max_train_samples"),
+        max_val_samples=_optional_positive_int(cfg.get("max_val_samples"), "classifier.max_val_samples"),
+        log_every_n_batches=int(cfg.get("log_every_n_batches", 25)),
     )
+    _validate_training_config(config)
+    return config
+
+
+def _validate_training_config(config: TrainingRunConfig) -> None:
     if config.model_name != "efficientnet_b0":
         raise TrainingValidationError("classifier.model_name must be efficientnet_b0 for SPEC-005")
     if config.image_size != 384:
@@ -185,7 +209,10 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         raise TrainingValidationError("classifier.batch_size must be at least 1")
     if config.num_workers < 0:
         raise TrainingValidationError("classifier.num_workers must be non-negative")
-    return config
+    if config.log_every_n_batches < 1:
+        raise TrainingValidationError("classifier.log_every_n_batches must be at least 1")
+    if config.epochs < 1:
+        raise TrainingValidationError("classifier.epochs must be at least 1")
 
 
 def set_reproducible_seed(seed: int) -> None:
@@ -198,6 +225,10 @@ def set_reproducible_seed(seed: int) -> None:
 def load_training_examples(dataset_root: str | Path) -> list[TrainingExample]:
     """Load and validate labeled training examples from a dataset root."""
 
+    return _load_training_examples_with_report(dataset_root).examples
+
+
+def _load_training_examples_with_report(dataset_root: str | Path) -> TrainingExampleLoadResult:
     try:
         report = audit_dataset(dataset_root)
     except DatasetValidationError as exc:
@@ -217,7 +248,12 @@ def load_training_examples(dataset_root: str | Path) -> list[TrainingExample]:
     ]
     if not examples:
         raise TrainingValidationError("No labeled training examples found")
-    return examples
+    return TrainingExampleLoadResult(
+        examples=examples,
+        resolved_dataset_root=report.paths.root.resolve(),
+        train_csv_row_count=len(report.train_rows),
+        train_image_count=len(report.train_images),
+    )
 
 
 def make_stratified_split(
@@ -225,6 +261,8 @@ def make_stratified_split(
     *,
     validation_split: float = 0.2,
     seed: int = 42,
+    max_train_samples: Optional[int] = None,
+    max_val_samples: Optional[int] = None,
 ) -> SplitAssignment:
     """Create a reproducible 80/20 stratified split."""
 
@@ -246,10 +284,10 @@ def make_stratified_split(
         validation.extend(sorted(items[:validation_count], key=lambda item: item.image_id))
         train.extend(sorted(items[validation_count:], key=lambda item: item.image_id))
 
-    return SplitAssignment(
-        train=sorted(train, key=lambda item: item.image_id),
-        validation=sorted(validation, key=lambda item: item.image_id),
-    )
+    train = _limit_stratified_examples(train, max_train_samples, seed=seed + 101, split_name="train")
+    validation = _limit_stratified_examples(validation, max_val_samples, seed=seed + 202, split_name="validation")
+
+    return SplitAssignment(train=train, validation=validation)
 
 
 def select_training_device(requested: str = "auto") -> torch.device:
@@ -329,14 +367,39 @@ def run_training(
         active_config = _replace_config(active_config, seed=seed)
     if epochs is not None:
         active_config = _replace_config(active_config, epochs=epochs)
+    _validate_training_config(active_config)
 
     set_reproducible_seed(active_config.seed)
-    examples = load_training_examples(dataset_root)
-    split = make_stratified_split(examples, validation_split=active_config.validation_split, seed=active_config.seed)
+    output_root = Path(output_root)
+    _log("Training start")
+    load_result = _load_training_examples_with_report(dataset_root)
+    examples = load_result.examples
+    _log(f"resolved_dataset_root={load_result.resolved_dataset_root}")
+    _log(f"train_csv_row_count={load_result.train_csv_row_count}")
+    _log(f"train_image_count={load_result.train_image_count}")
+    _log(f"label_distribution={_class_counts(examples)}")
+    _log_examples(examples)
+
+    split = make_stratified_split(
+        examples,
+        validation_split=active_config.validation_split,
+        seed=active_config.seed,
+        max_train_samples=active_config.max_train_samples,
+        max_val_samples=active_config.max_val_samples,
+    )
     train_counts = _class_counts(split.train)
     validation_counts = _class_counts(split.validation)
     device = select_training_device(active_config.device)
     non_blocking = bool(active_config.pin_memory and device.type == "cuda")
+    _log(f"train_split_size={len(split.train)} validation_split_size={len(split.validation)}")
+    _log(f"train_label_distribution={train_counts}")
+    _log(f"validation_label_distribution={validation_counts}")
+    _log(f"selected_device={device}")
+    _log(f"model_name={'tiny_cnn' if synthetic_smoke else active_config.model_name}")
+    _log(f"image_size={active_config.image_size}")
+    _log(f"batch_size={active_config.batch_size}")
+    _log(f"num_workers={active_config.num_workers}")
+    _log(f"epochs={active_config.epochs}")
 
     model = create_classifier(
         model_name="tiny_cnn" if synthetic_smoke else active_config.model_name,
@@ -352,6 +415,7 @@ def run_training(
     optimizer = torch.optim.AdamW(model.parameters(), lr=active_config.learning_rate, weight_decay=active_config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(active_config.epochs, 1))
     loaders = build_training_dataloaders(split, config=active_config, device=device, synthetic_smoke=synthetic_smoke)
+    _log(f"DataLoader created train_batches={len(loaders.train)} validation_batches={len(loaders.validation)}")
 
     best_state = None
     best_metrics = None
@@ -360,7 +424,7 @@ def run_training(
     best_epoch = 0
     for epoch in range(1, active_config.epochs + 1):
         model.train()
-        for batch_inputs, batch_labels, _image_ids in loaders.train:
+        for batch_index, (batch_inputs, batch_labels, _image_ids) in enumerate(loaders.train, start=1):
             batch_inputs = batch_inputs.to(device, non_blocking=non_blocking)
             batch_labels = batch_labels.to(device, non_blocking=non_blocking)
             optimizer.zero_grad()
@@ -368,6 +432,9 @@ def run_training(
             loss = loss_fn(logits, batch_labels)
             loss.backward()
             optimizer.step()
+            if batch_index == 1 or batch_index % active_config.log_every_n_batches == 0:
+                elapsed = time.perf_counter() - started
+                _log(f"epoch={epoch} batch={batch_index}/{len(loaders.train)} loss={loss.item():.6f} elapsed_seconds={elapsed:.2f}")
         scheduler.step()
 
         validation_labels, probabilities = _collect_validation_predictions(model, loaders.validation, device=device)
@@ -377,6 +444,7 @@ def run_training(
             probabilities=probabilities,
             threshold=threshold.threshold,
         )
+        _log(f"epoch={epoch} validation_f1={metrics.f1_score:.6f} threshold={threshold.threshold:.2f}")
         if best_metrics is None or metrics.f1_score > best_metrics.f1_score:
             best_metrics = metrics
             best_threshold = threshold
@@ -385,12 +453,13 @@ def run_training(
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
 
     assert best_state is not None and best_metrics is not None and best_threshold is not None
-    output_root = Path(output_root)
     model_path = _resolve_output_path(output_root, DEFAULT_MODEL_OUTPUT)
     metrics_path = _resolve_output_path(output_root, DEFAULT_METRICS_OUTPUT)
     threshold_path = _resolve_output_path(output_root, DEFAULT_THRESHOLD_OUTPUT)
+    label_distribution_path = _resolve_output_path(output_root, DEFAULT_LABEL_DISTRIBUTION_OUTPUT)
+    split_distribution_path = _resolve_output_path(output_root, DEFAULT_SPLIT_DISTRIBUTION_OUTPUT)
     predictions_path = _resolve_output_path(output_root, DEFAULT_PREDICTIONS_OUTPUT)
-    for path in (model_path, metrics_path, threshold_path, predictions_path):
+    for path in (model_path, metrics_path, threshold_path, label_distribution_path, split_distribution_path, predictions_path):
         path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.save(best_state, model_path)
@@ -398,6 +467,13 @@ def run_training(
     _write_predictions(predictions_path, predictions)
     runtime_seconds = round(time.perf_counter() - started, 6)
     _write_threshold(threshold_path, best_threshold)
+    _write_label_distribution(
+        label_distribution_path,
+        total_rows=load_result.train_csv_row_count,
+        train_image_count=load_result.train_image_count,
+        counts=_class_counts(examples),
+    )
+    _write_split_distribution(split_distribution_path, split=split)
     _write_metrics(
         metrics_path,
         report=ClassifierMetricsReport(
@@ -410,14 +486,18 @@ def run_training(
             best_epoch=best_epoch,
             device=device.type,
             pos_weight=pos_weight,
+            class_weights={"0": 1.0, "1": pos_weight},
             artifact_paths={
                 "model": str(model_path),
                 "metrics": str(metrics_path),
                 "threshold": str(threshold_path),
+                "label_distribution": str(label_distribution_path),
+                "split_distribution": str(split_distribution_path),
                 "predictions": str(predictions_path),
             },
         ),
     )
+    _log(f"total_runtime_seconds={runtime_seconds:.2f}")
 
     return TrainingRunResult(
         split=split,
@@ -426,6 +506,8 @@ def run_training(
         model_path=model_path,
         metrics_path=metrics_path,
         threshold_path=threshold_path,
+        label_distribution_path=label_distribution_path,
+        split_distribution_path=split_distribution_path,
         predictions_path=predictions_path,
         runtime_seconds=runtime_seconds,
     )
@@ -454,9 +536,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--synthetic-smoke", action="store_true")
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--max-train-samples", type=int, default=None)
+    parser.add_argument("--max-val-samples", type=int, default=None)
+    parser.add_argument("--log-every-n-batches", type=int, default=None)
     args = parser.parse_args(argv)
 
     config = load_classifier_config(args.config)
+    overrides: dict[str, object] = {}
+    if args.max_train_samples is not None:
+        overrides["max_train_samples"] = args.max_train_samples
+    if args.max_val_samples is not None:
+        overrides["max_val_samples"] = args.max_val_samples
+    if args.log_every_n_batches is not None:
+        overrides["log_every_n_batches"] = args.log_every_n_batches
+    if overrides:
+        config = _replace_config(config, **overrides)
     result = run_training(
         dataset_root=args.dataset_root,
         output_root=args.output_root,
@@ -479,6 +573,15 @@ def _replace_config(config: TrainingRunConfig, **changes: object) -> TrainingRun
     return TrainingRunConfig(**values)
 
 
+def _optional_positive_int(value: object, field_name: str) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    parsed = int(value)
+    if parsed < 1:
+        raise TrainingValidationError(f"{field_name} must be at least 1 when set")
+    return parsed
+
+
 def _resolve_output_path(output_root: Path, default_path: Path) -> Path:
     if output_root in (Path("."), Path("")):
         return default_path
@@ -494,6 +597,62 @@ def _class_counts(examples: Sequence[TrainingExample]) -> dict[str, int]:
         "0": sum(1 for example in examples if example.label == 0),
         "1": sum(1 for example in examples if example.label == 1),
     }
+
+
+def _limit_stratified_examples(
+    examples: Sequence[TrainingExample],
+    max_samples: Optional[int],
+    *,
+    seed: int,
+    split_name: str,
+) -> list[TrainingExample]:
+    examples = list(examples)
+    if max_samples is None or max_samples >= len(examples):
+        return sorted(examples, key=lambda item: item.image_id)
+    if max_samples < 2:
+        raise TrainingValidationError(f"{split_name} debug limit must be at least 2 to preserve both classes")
+
+    by_label: dict[int, list[TrainingExample]] = {0: [], 1: []}
+    for example in examples:
+        by_label[example.label].append(example)
+    if not by_label[0] or not by_label[1]:
+        raise TrainingValidationError(f"{split_name} split must contain both classes before applying debug limits")
+
+    rng = random.Random(seed)
+    label_counts = {label: len(items) for label, items in by_label.items()}
+    selected_counts = {
+        label: max(1, int(round(label_counts[label] / len(examples) * max_samples)))
+        for label in (0, 1)
+    }
+
+    while sum(selected_counts.values()) > max_samples:
+        candidates = [label for label in (0, 1) if selected_counts[label] > 1]
+        if not candidates:
+            break
+        label = max(candidates, key=lambda item: selected_counts[item])
+        selected_counts[label] -= 1
+    while sum(selected_counts.values()) < max_samples:
+        candidates = [label for label in (0, 1) if selected_counts[label] < label_counts[label]]
+        if not candidates:
+            break
+        label = max(candidates, key=lambda item: label_counts[item] - selected_counts[item])
+        selected_counts[label] += 1
+
+    limited: list[TrainingExample] = []
+    for label in (0, 1):
+        items = list(by_label[label])
+        rng.shuffle(items)
+        limited.extend(items[: selected_counts[label]])
+    return sorted(limited, key=lambda item: item.image_id)
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
+def _log_examples(examples: Sequence[TrainingExample], *, limit: int = 5) -> None:
+    for example in examples[:limit]:
+        _log(f"example image_id={example.image_id} target={example.label} image_path={example.image_path}")
 
 
 def _format_missing_images(missing_images: Sequence[str], *, limit: int = 20) -> str:
@@ -517,6 +676,7 @@ def _collect_validation_predictions(
     with torch.no_grad():
         for batch_inputs, batch_labels, _image_ids in loader:
             batch_inputs = batch_inputs.to(device)
+            batch_labels = batch_labels.to(device)
             logits = model(batch_inputs)
             probabilities.extend(torch.sigmoid(logits).cpu().numpy().astype(float).tolist())
             labels.extend(batch_labels.cpu().numpy().astype(int).tolist())
@@ -556,6 +716,45 @@ def _write_threshold(path: Path, threshold: ThresholdSearchResult) -> None:
                 "f1_score": threshold.f1_score,
                 "tie_break": threshold.tie_break,
                 "candidate_count": threshold.candidate_count,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_label_distribution(
+    path: Path,
+    *,
+    total_rows: int,
+    train_image_count: int,
+    counts: dict[str, int],
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "total_rows": total_rows,
+                "train_image_count": train_image_count,
+                "label_counts": counts,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_split_distribution(path: Path, *, split: SplitAssignment) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "train": {
+                    "count": len(split.train),
+                    "label_counts": _class_counts(split.train),
+                },
+                "validation": {
+                    "count": len(split.validation),
+                    "label_counts": _class_counts(split.validation),
+                },
             },
             indent=2,
         ),
