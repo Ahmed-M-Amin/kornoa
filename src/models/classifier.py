@@ -1,9 +1,18 @@
-"""Classifier model factory for SPEC-005 binary training."""
+"""Classifier model factory for binary training."""
 
 from __future__ import annotations
 
 import torch
 from torch import nn
+
+
+SUPPORTED_CLASSIFIER_BACKBONES = {
+    "efficientnet_b0",
+    "efficientnet_b1",
+    "efficientnet_b2",
+    "convnext_tiny",
+    "tiny_cnn",
+}
 
 
 class BinaryClassifier(nn.Module):
@@ -55,15 +64,30 @@ def create_classifier(
     if synthetic_smoke or model_name == "tiny_cnn":
         return BinaryClassifier(TinyCnnBackbone(), model_name=model_name, num_classes=num_classes)
 
-    if model_name != "efficientnet_b0":
+    if model_name not in SUPPORTED_CLASSIFIER_BACKBONES:
         raise ValueError(f"Unsupported classifier model: {model_name}")
 
     try:
-        from torchvision.models import efficientnet_b0
+        from torchvision import models
     except Exception as exc:  # pragma: no cover - environment-specific fallback
-        raise RuntimeError("torchvision EfficientNet-B0 is unavailable") from exc
+        raise RuntimeError("torchvision classifier models are unavailable") from exc
 
-    model = efficientnet_b0(weights=None)
-    in_features = model.classifier[-1].in_features
-    model.classifier[-1] = nn.Linear(in_features, 1)
+    if model_name == "efficientnet_b0":
+        model = models.efficientnet_b0(weights=None)
+        in_features = model.classifier[-1].in_features
+        model.classifier[-1] = nn.Linear(in_features, 1)
+    elif model_name == "efficientnet_b1":
+        model = models.efficientnet_b1(weights=None)
+        in_features = model.classifier[-1].in_features
+        model.classifier[-1] = nn.Linear(in_features, 1)
+    elif model_name == "efficientnet_b2":
+        model = models.efficientnet_b2(weights=None)
+        in_features = model.classifier[-1].in_features
+        model.classifier[-1] = nn.Linear(in_features, 1)
+    elif model_name == "convnext_tiny":
+        model = models.convnext_tiny(weights=None)
+        in_features = model.classifier[-1].in_features
+        model.classifier[-1] = nn.Linear(in_features, 1)
+    else:  # pragma: no cover - guarded above
+        raise ValueError(f"Unsupported classifier model: {model_name}")
     return BinaryClassifier(model, model_name=model_name, num_classes=num_classes)

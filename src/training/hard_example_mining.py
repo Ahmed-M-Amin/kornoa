@@ -51,6 +51,24 @@ class HardExampleMiningResult:
     summary_path: Path
 
 
+@dataclass(frozen=True)
+class HardExampleSourceReport:
+    false_positives_path: Path
+    false_negatives_path: Path
+    uncertain_path: Path
+    high_loss_samples_path: Path
+    summary_path: Path
+    loaded_counts: dict[str, int]
+    summary_counts: dict[str, int]
+    count_mismatches: dict[str, dict[str, int]]
+    eligible_for_training_count: int
+    excluded_validation_count: int
+    used_for_oversampling_count: int
+    train_validation_disjoint: bool
+    excluded_rows: list[str]
+    oversampled_image_ids: list[str]
+
+
 def mine_hard_examples(
     *,
     artifact_root: str | Path | None = None,
@@ -127,9 +145,85 @@ def mine_hard_examples(
     return HardExampleMiningResult(fp_path, fn_path, uncertain_path, high_loss_path, summary)
 
 
+def prepare_hard_example_report(
+    *,
+    hard_examples_root: str | Path = DEFAULT_HARD_EXAMPLES_DIR,
+    summary_path: str | Path = DEFAULT_HARD_EXAMPLE_SUMMARY,
+    train_image_ids: Sequence[str] = (),
+    validation_image_ids: Sequence[str] = (),
+    strategy: str = "analysis_only",
+) -> HardExampleSourceReport:
+    """Load V1 hard-example source sets and report V2 leakage exclusions."""
+
+    root = Path(hard_examples_root)
+    paths = {
+        "false_positives": root / "false_positives.csv",
+        "false_negatives": root / "false_negatives.csv",
+        "uncertain": root / "uncertain.csv",
+        "high_loss_samples": root / "high_loss_samples.csv",
+    }
+    loaded: dict[str, list[str]] = {name: _load_image_ids(path) for name, path in paths.items()}
+    loaded_counts = {name: len(ids) for name, ids in loaded.items()}
+    summary_counts = _load_summary_counts(Path(summary_path))
+    count_mismatches = {
+        name: {"loaded": loaded_counts.get(name, 0), "summary": summary_counts.get(name, 0)}
+        for name in sorted(set(loaded_counts) | set(summary_counts))
+        if loaded_counts.get(name, 0) != summary_counts.get(name, 0)
+    }
+
+    train_set = set(train_image_ids)
+    validation_set = set(validation_image_ids)
+    all_hard_ids = sorted({image_id for ids in loaded.values() for image_id in ids})
+    unmapped = sorted(image_id for image_id in all_hard_ids if image_id not in train_set and image_id not in validation_set)
+    validation_excluded = sorted(image_id for image_id in all_hard_ids if image_id in validation_set)
+    eligible = sorted(image_id for image_id in all_hard_ids if image_id in train_set)
+    oversampled = eligible if strategy == "oversample" else []
+    return HardExampleSourceReport(
+        false_positives_path=paths["false_positives"],
+        false_negatives_path=paths["false_negatives"],
+        uncertain_path=paths["uncertain"],
+        high_loss_samples_path=paths["high_loss_samples"],
+        summary_path=Path(summary_path),
+        loaded_counts=loaded_counts,
+        summary_counts=summary_counts,
+        count_mismatches=count_mismatches,
+        eligible_for_training_count=len(eligible),
+        excluded_validation_count=len(validation_excluded),
+        used_for_oversampling_count=len(oversampled),
+        train_validation_disjoint=not bool(train_set & validation_set),
+        excluded_rows=[*unmapped, *validation_excluded],
+        oversampled_image_ids=oversampled,
+    )
+
+
 def _resolve_artifact_root(root: str | Path) -> Path:
     raw = Path(root)
     return raw / "kaggle_v1" if (raw / "kaggle_v1").is_dir() else raw
+
+
+def _load_image_ids(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None or "image_id" not in reader.fieldnames:
+            raise HardExampleMiningError(f"Hard-example CSV must contain image_id: {path}")
+        return [row["image_id"] for row in reader if row.get("image_id")]
+
+
+def _load_summary_counts(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HardExampleMiningError(f"Hard-example summary is not valid JSON: {path}") from exc
+    counts = raw.get("counts", raw)
+    output: dict[str, int] = {}
+    for key in ("false_positives", "false_negatives", "uncertain", "high_loss_samples"):
+        if key in counts:
+            output[key] = int(counts[key])
+    return output
 
 
 def _load_prediction_rows(path: Path, threshold: float) -> list[HardExampleRow]:

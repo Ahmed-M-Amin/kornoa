@@ -8,22 +8,25 @@ import json
 import random
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
 import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from src.data.dataset import DatasetValidationError, audit_dataset
 from src.data.preprocessing import preprocess_image
 from src.data.roi import RoiCropRequest
 from src.models.classifier import create_classifier
-from src.training.losses import create_weighted_bce_loss
-from src.training.metrics import BinaryMetrics, compute_binary_metrics
+from src.training.losses import create_binary_focal_loss, create_weighted_bce_loss
+from src.training.metrics import BinaryMetrics, V1BaselineRecord, V2CandidateResult, compute_binary_metrics, generate_v1_vs_v2_comparison
 from src.training.threshold_search import ThresholdSearchResult, find_best_threshold
+
+if TYPE_CHECKING:
+    from src.training.hard_example_mining import HardExampleSourceReport
 
 
 DEFAULT_MODEL_OUTPUT = Path("outputs/models/classifier_effnet_b0_best.pth")
@@ -32,6 +35,28 @@ DEFAULT_THRESHOLD_OUTPUT = Path("outputs/reports/best_threshold.json")
 DEFAULT_LABEL_DISTRIBUTION_OUTPUT = Path("outputs/reports/label_distribution.json")
 DEFAULT_SPLIT_DISTRIBUTION_OUTPUT = Path("outputs/reports/split_distribution.json")
 DEFAULT_PREDICTIONS_OUTPUT = Path("outputs/predictions/val_classifier_predictions.csv")
+V2_OUTPUT_ROOT = Path("outputs/kaggle_v2")
+V2_MODEL_OUTPUT = V2_OUTPUT_ROOT / "models/classifier_best.pth"
+V2_METRICS_OUTPUT = V2_OUTPUT_ROOT / "reports/classifier_metrics.json"
+V2_THRESHOLD_OUTPUT = V2_OUTPUT_ROOT / "reports/best_threshold.json"
+V2_PREDICTIONS_OUTPUT = V2_OUTPUT_ROOT / "predictions/val_classifier_predictions.csv"
+V2_COMPARISON_OUTPUT = V2_OUTPUT_ROOT / "reports/v1_vs_v2_comparison.json"
+V2_ALLOWED_HARD_EXAMPLE_STRATEGIES = {"none", "analysis_only", "oversample"}
+V2_ALLOWED_BACKBONES = {"efficientnet_b0", "efficientnet_b1", "efficientnet_b2", "convnext_tiny", "tiny_cnn"}
+V2_FORBIDDEN_FLAGS = {
+    "detector",
+    "segmentation",
+    "grad_cam",
+    "gradcam",
+    "dashboard",
+    "feature_memory_bank",
+    "memory_bank",
+    "default_ensemble",
+    "ensemble",
+    "distillation",
+    "hybrid_inference",
+    "hybrid",
+}
 
 class TrainingValidationError(ValueError):
     """Raised when classifier training inputs are invalid."""
@@ -43,14 +68,27 @@ class TrainingExample:
     image_path: Path
     label: int
 
-    def load_preprocessed(self, *, split: str, seed: Optional[int] = None) -> np.ndarray:
+    def load_preprocessed(
+        self,
+        *,
+        split: str,
+        seed: Optional[int] = None,
+        target_size: tuple[int, int] = (384, 384),
+        augmentation_recipe: str = "v1",
+    ) -> np.ndarray:
         request = RoiCropRequest(
             image_id=self.image_id,
             image_path=self.image_path,
             split=split,
             annotation_bbox=None,
+            target_size=target_size,
         )
-        return preprocess_image(request, split=split, seed=seed).normalized
+        return preprocess_image(
+            request,
+            split=split,
+            seed=seed,
+            augmentation_recipe=augmentation_recipe,
+        ).normalized
 
 
 @dataclass(frozen=True)
@@ -84,6 +122,16 @@ class TrainingRunConfig:
     max_train_samples: Optional[int] = None
     max_val_samples: Optional[int] = None
     log_every_n_batches: int = 25
+    experiment_name: str = "v1_effnet_b0"
+    imbalance_strategy: str = "weighted_bce"
+    augmentation_recipe: str = "v1"
+    hard_example_strategy: str = "none"
+    weighted_sampler: bool = False
+    focal_alpha: float = 0.25
+    focal_gamma: float = 2.0
+    speed_ceiling_multiplier: float = 2.0
+    close_f1_tolerance: float = 0.002
+    v2: bool = False
 
 
 @dataclass(frozen=True)
@@ -108,6 +156,10 @@ class ClassifierMetricsReport:
     pos_weight: float
     class_weights: dict[str, float]
     artifact_paths: dict[str, str]
+    experiment_name: str = "v1_effnet_b0"
+    hard_example_strategy: str = "none"
+    imbalance_strategy: str = "weighted_bce"
+    split_disjointness: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -137,6 +189,7 @@ class TrainingRunResult:
     split_distribution_path: Path
     predictions_path: Path
     runtime_seconds: float
+    hard_example_report: Optional["HardExampleSourceReport"] = None
 
 
 @dataclass(frozen=True)
@@ -154,10 +207,14 @@ class ClassifierTrainingDataset(Dataset):
         *,
         split_name: str,
         seed: Optional[int] = None,
+        target_size: tuple[int, int] = (384, 384),
+        augmentation_recipe: str = "v1",
     ) -> None:
         self.examples = list(examples)
         self.split_name = split_name
         self.seed = seed
+        self.target_size = target_size
+        self.augmentation_recipe = augmentation_recipe
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -165,7 +222,12 @@ class ClassifierTrainingDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str]:
         example = self.examples[index]
         sample_seed = None if self.seed is None else self.seed + index
-        array = example.load_preprocessed(split=self.split_name, seed=sample_seed)
+        array = example.load_preprocessed(
+            split=self.split_name,
+            seed=sample_seed,
+            target_size=self.target_size,
+            augmentation_recipe=self.augmentation_recipe,
+        )
         inputs = torch.from_numpy(array).to(dtype=torch.float32)
         label = torch.tensor(float(example.label), dtype=torch.float32)
         return inputs, label, example.image_id
@@ -177,6 +239,9 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     with Path(config_path).open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
     cfg = raw.get("classifier", raw)
+    is_v2 = bool(cfg.get("v2", False) or raw.get("v2", False) or "classifier_v2" in Path(config_path).name)
+    if is_v2:
+        validate_v2_scope_guards({**raw, **cfg})
     config = TrainingRunConfig(
         model_name=str(cfg.get("model_name", "efficientnet_b0")),
         image_size=int(cfg.get("image_size", 384)),
@@ -193,18 +258,58 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         max_train_samples=_optional_positive_int(cfg.get("max_train_samples"), "classifier.max_train_samples"),
         max_val_samples=_optional_positive_int(cfg.get("max_val_samples"), "classifier.max_val_samples"),
         log_every_n_batches=int(cfg.get("log_every_n_batches", 25)),
+        experiment_name=str(cfg.get("experiment_name", "v2a_effnet_b0_recipe" if is_v2 else "v1_effnet_b0")),
+        imbalance_strategy=str(cfg.get("imbalance_strategy", "focal_loss_weighted_sampler" if is_v2 else "weighted_bce")),
+        augmentation_recipe=str(cfg.get("augmentation_recipe", "v2_safe" if is_v2 else "v1")),
+        hard_example_strategy=str(cfg.get("hard_example_strategy", "analysis_only" if is_v2 else "none")),
+        weighted_sampler=bool(cfg.get("weighted_sampler", is_v2)),
+        focal_alpha=float(cfg.get("focal_alpha", 0.25)),
+        focal_gamma=float(cfg.get("focal_gamma", 2.0)),
+        speed_ceiling_multiplier=float(cfg.get("speed_ceiling_multiplier", 2.0)),
+        close_f1_tolerance=float(cfg.get("close_f1_tolerance", 0.002)),
+        v2=is_v2,
     )
     _validate_training_config(config)
     return config
 
 
 def _validate_training_config(config: TrainingRunConfig) -> None:
+    if config.v2:
+        _validate_v2_training_config(config)
+        return
     if config.model_name != "efficientnet_b0":
         raise TrainingValidationError("classifier.model_name must be efficientnet_b0 for SPEC-005")
     if config.image_size != 384:
         raise TrainingValidationError("classifier.image_size must be 384")
     if config.num_classes != 2:
         raise TrainingValidationError("classifier.num_classes must be 2")
+    if config.batch_size < 1:
+        raise TrainingValidationError("classifier.batch_size must be at least 1")
+    if config.num_workers < 0:
+        raise TrainingValidationError("classifier.num_workers must be non-negative")
+    if config.log_every_n_batches < 1:
+        raise TrainingValidationError("classifier.log_every_n_batches must be at least 1")
+    if config.epochs < 1:
+        raise TrainingValidationError("classifier.epochs must be at least 1")
+
+
+def _validate_v2_training_config(config: TrainingRunConfig) -> None:
+    if config.model_name not in V2_ALLOWED_BACKBONES:
+        raise TrainingValidationError("V2 classifier.model_name must be EfficientNet-B0/B1/B2 or optional ConvNeXt-Tiny")
+    if config.image_size not in {384, 448}:
+        raise TrainingValidationError("V2 classifier.image_size must be 384 or optional 448")
+    if config.image_size == 448 and "448" not in config.experiment_name:
+        raise TrainingValidationError("V2 448x448 candidates must be explicitly named and run after 384 baseline candidates")
+    if config.num_classes != 2:
+        raise TrainingValidationError("classifier.num_classes must be 2")
+    if config.hard_example_strategy not in V2_ALLOWED_HARD_EXAMPLE_STRATEGIES:
+        raise TrainingValidationError("V2 hard_example_strategy must be none, analysis_only, or oversample")
+    if config.augmentation_recipe not in {"v1", "v2_safe"}:
+        raise TrainingValidationError("V2 augmentation_recipe must be v1 or v2_safe")
+    if config.speed_ceiling_multiplier > 2.0 or config.speed_ceiling_multiplier <= 0:
+        raise TrainingValidationError("V2 speed_ceiling_multiplier must be > 0 and <= 2.0")
+    if config.close_f1_tolerance != 0.002:
+        raise TrainingValidationError("V2 close_f1_tolerance must remain 0.002")
     if config.batch_size < 1:
         raise TrainingValidationError("classifier.batch_size must be at least 1")
     if config.num_workers < 0:
@@ -319,6 +424,7 @@ def build_training_dataloaders(
     config: TrainingRunConfig,
     device: torch.device,
     synthetic_smoke: bool = False,
+    hard_example_weights: Optional[dict[str, float]] = None,
 ) -> TrainingDataLoaders:
     """Build train/validation DataLoaders without preloading the full dataset."""
 
@@ -329,13 +435,31 @@ def build_training_dataloaders(
         split.train,
         split_name="train",
         seed=config.seed if synthetic_smoke else config.seed,
+        target_size=(config.image_size, config.image_size),
+        augmentation_recipe=config.augmentation_recipe,
     )
-    validation_dataset = ClassifierTrainingDataset(split.validation, split_name="validation", seed=config.seed)
+    validation_dataset = ClassifierTrainingDataset(
+        split.validation,
+        split_name="validation",
+        seed=config.seed,
+        target_size=(config.image_size, config.image_size),
+        augmentation_recipe=config.augmentation_recipe,
+    )
+    sampler = None
+    shuffle = True
+    if config.weighted_sampler:
+        sampler = build_weighted_random_sampler(
+            split.train,
+            seed=config.seed,
+            hard_example_weights=hard_example_weights,
+        )
+        shuffle = False
     return TrainingDataLoaders(
         train=DataLoader(
             train_dataset,
             batch_size=config.batch_size,
-            shuffle=True,
+            shuffle=shuffle,
+            sampler=sampler,
             num_workers=config.num_workers,
             pin_memory=pin_memory,
             generator=generator,
@@ -358,6 +482,9 @@ def run_training(
     synthetic_smoke: bool = False,
     seed: Optional[int] = None,
     epochs: Optional[int] = None,
+    hard_examples_root: str | Path = "outputs/hard_examples",
+    hard_example_summary_path: str | Path = "outputs/reports/hard_example_summary.json",
+    v1_baseline: Optional[V1BaselineRecord] = None,
 ) -> TrainingRunResult:
     """Run a reproducible binary classifier training pass."""
 
@@ -387,13 +514,30 @@ def run_training(
         max_train_samples=active_config.max_train_samples,
         max_val_samples=active_config.max_val_samples,
     )
+    from src.training.hard_example_mining import prepare_hard_example_report
+
     train_counts = _class_counts(split.train)
     validation_counts = _class_counts(split.validation)
+    split_disjointness = report_split_disjointness(split)
+    hard_example_report = prepare_hard_example_report(
+        hard_examples_root=hard_examples_root,
+        summary_path=hard_example_summary_path,
+        train_image_ids=[example.image_id for example in split.train],
+        validation_image_ids=[example.image_id for example in split.validation],
+        strategy=active_config.hard_example_strategy,
+    )
+    hard_example_weights = (
+        build_hard_example_weight_map(hard_example_report, strategy=active_config.hard_example_strategy)
+        if active_config.hard_example_strategy == "oversample"
+        else None
+    )
     device = select_training_device(active_config.device)
     non_blocking = bool(active_config.pin_memory and device.type == "cuda")
     _log(f"train_split_size={len(split.train)} validation_split_size={len(split.validation)}")
     _log(f"train_label_distribution={train_counts}")
     _log(f"validation_label_distribution={validation_counts}")
+    _log(f"split_disjointness={split_disjointness}")
+    _log(f"hard_example_strategy={active_config.hard_example_strategy}")
     _log(f"selected_device={device}")
     _log(f"model_name={'tiny_cnn' if synthetic_smoke else active_config.model_name}")
     _log(f"image_size={active_config.image_size}")
@@ -406,15 +550,31 @@ def run_training(
         num_classes=1,
         synthetic_smoke=synthetic_smoke,
     ).to(device)
-    loss_fn = create_weighted_bce_loss(
-        negative_count=train_counts["0"],
-        positive_count=train_counts["1"],
-        device=device,
-    ).to(device)
+    if active_config.imbalance_strategy.startswith("focal"):
+        loss_fn = create_binary_focal_loss(
+            negative_count=train_counts["0"],
+            positive_count=train_counts["1"],
+            alpha=active_config.focal_alpha,
+            gamma=active_config.focal_gamma,
+            use_pos_weight="weighted" in active_config.imbalance_strategy,
+            device=device,
+        ).to(device)
+    else:
+        loss_fn = create_weighted_bce_loss(
+            negative_count=train_counts["0"],
+            positive_count=train_counts["1"],
+            device=device,
+        ).to(device)
     pos_weight = train_counts["0"] / train_counts["1"]
     optimizer = torch.optim.AdamW(model.parameters(), lr=active_config.learning_rate, weight_decay=active_config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(active_config.epochs, 1))
-    loaders = build_training_dataloaders(split, config=active_config, device=device, synthetic_smoke=synthetic_smoke)
+    loaders = build_training_dataloaders(
+        split,
+        config=active_config,
+        device=device,
+        synthetic_smoke=synthetic_smoke,
+        hard_example_weights=hard_example_weights,
+    )
     _log(f"DataLoader created train_batches={len(loaders.train)} validation_batches={len(loaders.validation)}")
 
     best_state = None
@@ -453,12 +613,12 @@ def run_training(
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
 
     assert best_state is not None and best_metrics is not None and best_threshold is not None
-    model_path = _resolve_output_path(output_root, DEFAULT_MODEL_OUTPUT)
-    metrics_path = _resolve_output_path(output_root, DEFAULT_METRICS_OUTPUT)
-    threshold_path = _resolve_output_path(output_root, DEFAULT_THRESHOLD_OUTPUT)
+    model_path = _resolve_output_path(output_root, V2_MODEL_OUTPUT if active_config.v2 else DEFAULT_MODEL_OUTPUT)
+    metrics_path = _resolve_output_path(output_root, V2_METRICS_OUTPUT if active_config.v2 else DEFAULT_METRICS_OUTPUT)
+    threshold_path = _resolve_output_path(output_root, V2_THRESHOLD_OUTPUT if active_config.v2 else DEFAULT_THRESHOLD_OUTPUT)
     label_distribution_path = _resolve_output_path(output_root, DEFAULT_LABEL_DISTRIBUTION_OUTPUT)
     split_distribution_path = _resolve_output_path(output_root, DEFAULT_SPLIT_DISTRIBUTION_OUTPUT)
-    predictions_path = _resolve_output_path(output_root, DEFAULT_PREDICTIONS_OUTPUT)
+    predictions_path = _resolve_output_path(output_root, V2_PREDICTIONS_OUTPUT if active_config.v2 else DEFAULT_PREDICTIONS_OUTPUT)
     for path in (model_path, metrics_path, threshold_path, label_distribution_path, split_distribution_path, predictions_path):
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -495,8 +655,38 @@ def run_training(
                 "split_distribution": str(split_distribution_path),
                 "predictions": str(predictions_path),
             },
+            experiment_name=active_config.experiment_name,
+            hard_example_strategy=active_config.hard_example_strategy,
+            imbalance_strategy=active_config.imbalance_strategy,
+            split_disjointness={
+                **split_disjointness,
+                "hard_examples": asdict(hard_example_report),
+            },
         ),
     )
+    if active_config.v2 and v1_baseline is not None:
+        comparison_path = _resolve_output_path(output_root, V2_COMPARISON_OUTPUT)
+        comparison_path.parent.mkdir(parents=True, exist_ok=True)
+        v2_candidate = V2CandidateResult(
+            experiment_name=active_config.experiment_name,
+            backbone=active_config.model_name,
+            image_size=active_config.image_size,
+            validation_f1=best_metrics.f1_score,
+            best_threshold=best_threshold.threshold,
+            false_positives=best_metrics.confusion_counts["fp"],
+            false_negatives=best_metrics.confusion_counts["fn"],
+            uncertain_samples=0,
+            average_time_per_image=0.0,
+            speed_multiplier_vs_v1=1.0,
+            model_size_bytes=model_path.stat().st_size if model_path.exists() else 0,
+        )
+        comparison = generate_v1_vs_v2_comparison(
+            v1=v1_baseline,
+            candidates=[v2_candidate],
+            speed_ceiling_multiplier=active_config.speed_ceiling_multiplier,
+            close_f1_tolerance=active_config.close_f1_tolerance,
+        )
+        comparison_path.write_text(json.dumps(asdict(comparison), indent=2), encoding="utf-8")
     _log(f"total_runtime_seconds={runtime_seconds:.2f}")
 
     return TrainingRunResult(
@@ -510,6 +700,7 @@ def run_training(
         split_distribution_path=split_distribution_path,
         predictions_path=predictions_path,
         runtime_seconds=runtime_seconds,
+        hard_example_report=hard_example_report,
     )
 
 
@@ -527,6 +718,68 @@ def validate_generated_artifact_confidentiality(paths: Iterable[Path | str]) -> 
         else:
             unchecked.append(path)
     return GeneratedArtifactConfidentiality(ignored_paths=ignored, tracked_paths=tracked, unchecked_paths=unchecked)
+
+
+def build_weighted_random_sampler(
+    examples: Sequence[TrainingExample],
+    *,
+    seed: int = 42,
+    hard_example_weights: Optional[dict[str, float]] = None,
+) -> WeightedRandomSampler:
+    """Build a deterministic weighted sampler from class counts and optional hard-example weights."""
+
+    counts = _class_counts(examples)
+    if counts["0"] <= 0 or counts["1"] <= 0:
+        raise TrainingValidationError("weighted sampler requires both classes")
+    class_weight = {0: 1.0 / counts["0"], 1: 1.0 / counts["1"]}
+    hard_example_weights = hard_example_weights or {}
+    weights = [
+        float(class_weight[example.label] * hard_example_weights.get(example.image_id, 1.0))
+        for example in examples
+    ]
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return WeightedRandomSampler(
+        torch.tensor(weights, dtype=torch.double),
+        num_samples=len(weights),
+        replacement=True,
+        generator=generator,
+    )
+
+
+def build_hard_example_weight_map(
+    report: "HardExampleSourceReport",
+    *,
+    strategy: str,
+    oversample_multiplier: float = 2.0,
+) -> dict[str, float]:
+    """Return per-image multipliers for eligible hard examples only when oversampling is explicit."""
+
+    if strategy != "oversample":
+        return {}
+    return {image_id: oversample_multiplier for image_id in report.oversampled_image_ids}
+
+
+def report_split_disjointness(split: SplitAssignment) -> dict[str, object]:
+    """Report train/validation image-ID disjointness for leakage checks."""
+
+    train_ids = {example.image_id for example in split.train}
+    validation_ids = {example.image_id for example in split.validation}
+    overlap = sorted(train_ids & validation_ids)
+    return {
+        "train_count": len(train_ids),
+        "validation_count": len(validation_ids),
+        "train_validation_disjoint": not overlap,
+        "overlap_image_ids": overlap,
+    }
+
+
+def validate_v2_scope_guards(options: dict[str, object]) -> None:
+    """Reject SPEC-007 out-of-scope feature flags when enabled."""
+
+    enabled = sorted(key for key, value in options.items() if key in V2_FORBIDDEN_FLAGS and bool(value))
+    if enabled:
+        raise TrainingValidationError("SPEC-007 V2 classifier forbids: " + ", ".join(enabled))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -763,7 +1016,7 @@ def _write_split_distribution(path: Path, *, split: SplitAssignment) -> None:
 
 
 def _write_metrics(path: Path, *, report: ClassifierMetricsReport) -> None:
-    path.write_text(json.dumps(report.__dict__, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(asdict(report), indent=2, default=str), encoding="utf-8")
 
 
 def _normalize_git_path(path: Path) -> str:

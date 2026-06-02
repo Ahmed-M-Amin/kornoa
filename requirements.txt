@@ -1,4 +1,4 @@
-Get-ChildItem outputs\smoke -Recurse# Core Dependencies
+
 torch>=2.0.0
 torchvision>=0.15.0
 timm>=0.9.0
