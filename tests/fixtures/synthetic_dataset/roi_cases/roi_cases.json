@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "image_id": "dark-region",
+      "file_name": "dark_region.jpg",
+      "bbox": [50, 40, 100, 80],
+      "expected_annotation_crop_box": [40, 32, 160, 128]
+    },
+    {
+      "image_id": "small-roi",
+      "file_name": "small_roi.jpg",
+      "bbox": [96, 76, 8, 8]
+    },
+    {
+      "image_id": "wide-image",
+      "file_name": "wide_image.jpg",
+      "bbox": null
+    }
+  ]
+}

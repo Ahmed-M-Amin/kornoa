@@ -1,0 +1,13 @@
+classifier:
+  model_name: "efficientnet_b0"
+  num_classes: 2
+  image_size: 384
+  validation_split: 0.2
+  seed: 42
+  epochs: 3
+  batch_size: 4
+  num_workers: 0
+  pin_memory: false
+  device: "auto"
+  learning_rate: 0.001
+  weight_decay: 0.01

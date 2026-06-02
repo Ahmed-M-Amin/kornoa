@@ -1,33 +1,53 @@
-# Python
-.venv/
-venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.ipynb_checkpoints/
-
-# Environment / secrets
-.env
-*.env
-.env.*
-secrets.*
-*.key
-
-# Dataset - DO NOT COMMIT
+# === Private Dataset & Annotations ===
+# Never commit competition data or derived private artifacts
 1st-krones-vision-ai-challenge/
 train_images/
 test_images/
 train_annotations.json
 train.csv
 sample_submission.csv
+*.zip
+*.tar.gz
 
-# Outputs / generated artifacts
+# Allow synthetic test fixtures
+!tests/
+!tests/fixtures/
+!tests/fixtures/synthetic_dataset/
+!tests/fixtures/synthetic_dataset/**
+!tests/fixtures/synthetic_dataset/train_images/
+!tests/fixtures/synthetic_dataset/train_images/**
+!tests/fixtures/synthetic_dataset/test_images/
+!tests/fixtures/synthetic_dataset/test_images/**
+!tests/fixtures/synthetic_dataset/train.csv
+!tests/fixtures/synthetic_dataset/sample_submission.csv
+!tests/fixtures/synthetic_dataset/train_annotations.json
+
+
+# === Generated Output Categories ===
+# Allow .gitkeep to track empty output directories, but ignore generated contents
+outputs/models/*
+!outputs/models/.gitkeep
+
+outputs/predictions/*
+!outputs/predictions/.gitkeep
+
+outputs/figures/*
+!outputs/figures/.gitkeep
+
+outputs/reports/*
+!outputs/reports/.gitkeep
+
+outputs/submissions/*
+!outputs/submissions/.gitkeep
+
+outputs/hard_examples/*
+!outputs/hard_examples/.gitkeep
+
+# Also ignore any stray files directly in outputs/
 outputs/*
-!outputs/.gitignore
+!outputs/.gitkeep
 
-# Model weights / binaries
+# === Model Weights & Binary Artifacts ===
 *.pt
 *.pth
 *.onnx
@@ -35,30 +55,58 @@ outputs/*
 *.engine
 *.pkl
 *.joblib
+*.safetensors
+*.bin
+*.weights
 
-# Logs
+# === Python Environment & Cache ===
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === Jupyter Notebook Checkpoints ===
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# === Logs ===
 logs/
 *.log
 
-# OS / IDE
+# === Environment / Secrets ===
+.env
+*.env
+.env.*
+secrets.*
+*.key
+open-api.py
+
+# === OS / IDE ===
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-# Local OpenCode / agent runtime
-.opencode/
+*.swp
+*.tmp
+
+# === Local Agent / Tooling ===
 opencode.json
+.opencode/
+.agents/
 
-# Local API / secrets
-open-api.py
-.env
-*.env
-*.key
-secrets.*
-
-# Local MCP SQLite memory
+# === Local Database / Memory ===
 datei/*.db
 datei/*.sqlite
 datei/*.sqlite3
 
-.agents/
+configs/paths_local*.yaml

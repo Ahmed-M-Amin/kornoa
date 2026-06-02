@@ -1,0 +1,11 @@
+image_id,target
+neg_000.jpg,0
+neg_001.jpg,0
+neg_002.jpg,0
+neg_003.jpg,0
+neg_004.jpg,0
+pos_000.jpg,1
+pos_001.jpg,1
+pos_002.jpg,1
+pos_003.jpg,1
+pos_004.jpg,1

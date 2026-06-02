@@ -35,9 +35,9 @@ description: "Task list for SPEC-001 Project Foundation"
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Create private dataset and generated artifact ignore rules in `.gitignore`
-- [ ] T006 [P] Add output directory tracking exceptions for `.gitkeep` files in `.gitignore`
-- [ ] T007 [P] Add Python cache, virtual environment, and notebook checkpoint ignore rules in `.gitignore`
+- [X] T005 Create private dataset and generated artifact ignore rules in `.gitignore`
+- [X] T006 [P] Add output directory tracking exceptions for `.gitkeep` files in `.gitignore`
+- [X] T007 [P] Add Python cache, virtual environment, and notebook checkpoint ignore rules in `.gitignore`
 
 **Checkpoint**: Private data and generated artifact protections are defined.
 
@@ -51,15 +51,15 @@ description: "Task list for SPEC-001 Project Foundation"
 
 ### Tests for User Story 1
 
-- [ ] T008 [US1] Write failing workspace structure test for root files and directories in `tests/test_project_foundation.py`
-- [ ] T009 [US1] Write failing source package import test for `src/` package markers in `tests/test_project_foundation.py`
+- [X] T008 [US1] Write failing workspace structure test for root files and directories in `tests/test_project_foundation.py`
+- [X] T009 [US1] Write failing source package import test for `src/` package markers in `tests/test_project_foundation.py`
 
 ### Implementation for User Story 1
 
-- [ ] T010 [P] [US1] Create valid minimal notebook JSON placeholder files in `notebooks/01_dataset_audit.ipynb`, `notebooks/02_train_classifier.ipynb`, `notebooks/03_train_detector.ipynb`, `notebooks/04_distillation_memory.ipynb`, and `notebooks/05_kaggle_submission.ipynb`
-- [ ] T011 [P] [US1] Create source package markers in `src/data/__init__.py`, `src/models/__init__.py`, `src/training/__init__.py`, `src/inference/__init__.py`, `src/explainability/__init__.py`, `src/dashboard/__init__.py`, and `src/utils/__init__.py`
-- [ ] T012 [P] [US1] Create future test placeholder files in `tests/test_dataset.py`, `tests/test_coco_parser.py`, `tests/test_roi.py`, `tests/test_inference.py`, and `tests/test_submission.py`
-- [ ] T013 [US1] Run workspace structure and import checks with `pytest tests/test_project_foundation.py -q`
+- [X] T010 [P] [US1] Create valid minimal notebook JSON placeholder files in `notebooks/01_dataset_audit.ipynb`, `notebooks/02_train_classifier.ipynb`, `notebooks/03_train_detector.ipynb`, `notebooks/04_distillation_memory.ipynb`, and `notebooks/05_kaggle_submission.ipynb`
+- [X] T011 [P] [US1] Create source package markers in `src/data/__init__.py`, `src/models/__init__.py`, `src/training/__init__.py`, `src/inference/__init__.py`, `src/explainability/__init__.py`, `src/dashboard/__init__.py`, and `src/utils/__init__.py`
+- [X] T012 [P] [US1] Create future test placeholder files in `tests/test_dataset.py`, `tests/test_coco_parser.py`, `tests/test_roi.py`, `tests/test_inference.py`, and `tests/test_submission.py`
+- [X] T013 [US1] Run workspace structure and import checks with `pytest tests/test_project_foundation.py -q`
 
 **Checkpoint**: User Story 1 is complete when the repository foundation layout exists and package import checks pass.
 
@@ -73,17 +73,17 @@ description: "Task list for SPEC-001 Project Foundation"
 
 ### Tests for User Story 2
 
-- [ ] T014 [US2] Write failing configuration readability test for all YAML config files in `tests/test_project_foundation.py`
-- [ ] T015 [US2] Write failing paths configuration test for local, Kaggle, and Colab keys in `tests/test_project_foundation.py`
+- [X] T014 [US2] Write failing configuration readability test for all YAML config files in `tests/test_project_foundation.py`
+- [X] T015 [US2] Write failing paths configuration test for local, Kaggle, and Colab keys in `tests/test_project_foundation.py`
 
 ### Implementation for User Story 2
 
-- [ ] T016 [P] [US2] Create dataset path configuration template in `configs/paths.yaml`
-- [ ] T017 [P] [US2] Create classifier configuration placeholder in `configs/classifier.yaml`
-- [ ] T018 [P] [US2] Create detector configuration placeholder in `configs/detector.yaml`
-- [ ] T019 [P] [US2] Create inference configuration placeholder in `configs/inference.yaml`
-- [ ] T020 [P] [US2] Create dashboard configuration placeholder in `configs/dashboard.yaml`
-- [ ] T021 [US2] Run configuration readability checks with `pytest tests/test_project_foundation.py -q`
+- [X] T016 [P] [US2] Create dataset path configuration template in `configs/paths.yaml`
+- [X] T017 [P] [US2] Create classifier configuration placeholder in `configs/classifier.yaml`
+- [X] T018 [P] [US2] Create detector configuration placeholder in `configs/detector.yaml`
+- [X] T019 [P] [US2] Create inference configuration placeholder in `configs/inference.yaml`
+- [X] T020 [P] [US2] Create dashboard configuration placeholder in `configs/dashboard.yaml`
+- [X] T021 [US2] Run configuration readability checks with `pytest tests/test_project_foundation.py -q`
 
 **Checkpoint**: User Story 2 is complete when config files parse successfully and dataset roots are configurable for local Windows, Kaggle, and Colab.
 
@@ -97,19 +97,19 @@ description: "Task list for SPEC-001 Project Foundation"
 
 ### Tests for User Story 3
 
-- [ ] T022 [US3] Write failing output category structure test in `tests/test_project_foundation.py`
-- [ ] T023 [US3] Write failing ignore-rule coverage test for generated artifact categories in `tests/test_project_foundation.py`
+- [X] T022 [US3] Write failing output category structure test in `tests/test_project_foundation.py`
+- [X] T023 [US3] Write failing ignore-rule coverage test for generated artifact categories in `tests/test_project_foundation.py`
 
 ### Implementation for User Story 3
 
-- [ ] T024 [P] [US3] Create output tracking placeholder in `outputs/.gitkeep`
-- [ ] T025 [P] [US3] Create model output tracking placeholder in `outputs/models/.gitkeep`
-- [ ] T026 [P] [US3] Create prediction output tracking placeholder in `outputs/predictions/.gitkeep`
-- [ ] T027 [P] [US3] Create figure output tracking placeholder in `outputs/figures/.gitkeep`
-- [ ] T028 [P] [US3] Create report output tracking placeholder in `outputs/reports/.gitkeep`
-- [ ] T029 [P] [US3] Create submission output tracking placeholder in `outputs/submissions/.gitkeep`
-- [ ] T030 [P] [US3] Create hard-example output tracking placeholder in `outputs/hard_examples/.gitkeep`
-- [ ] T031 [US3] Run output structure and ignore-rule checks with `pytest tests/test_project_foundation.py -q`
+- [X] T024 [P] [US3] Create output tracking placeholder in `outputs/.gitkeep`
+- [X] T025 [P] [US3] Create model output tracking placeholder in `outputs/models/.gitkeep`
+- [X] T026 [P] [US3] Create prediction output tracking placeholder in `outputs/predictions/.gitkeep`
+- [X] T027 [P] [US3] Create figure output tracking placeholder in `outputs/figures/.gitkeep`
+- [X] T028 [P] [US3] Create report output tracking placeholder in `outputs/reports/.gitkeep`
+- [X] T029 [P] [US3] Create submission output tracking placeholder in `outputs/submissions/.gitkeep`
+- [X] T030 [P] [US3] Create hard-example output tracking placeholder in `outputs/hard_examples/.gitkeep`
+- [X] T031 [US3] Run output structure and ignore-rule checks with `pytest tests/test_project_foundation.py -q`
 
 **Checkpoint**: User Story 3 is complete when generated-output categories exist and generated contents remain protected by `.gitignore`.
 
@@ -119,10 +119,10 @@ description: "Task list for SPEC-001 Project Foundation"
 
 **Purpose**: Validate the full foundation against the Spec Kit contract and quickstart.
 
-- [ ] T032 Validate required root files, configs, source packages, outputs, and tests against `specs/001-project-foundation/contracts/foundation-structure.md`
-- [ ] T033 Run the quickstart validation commands documented in `specs/001-project-foundation/quickstart.md`
-- [ ] T034 Confirm no private dataset files from `1st-krones-vision-ai-challenge/` or generated artifact contents are tracked using `git ls-files`, and confirm ignore behavior using `git status --short --ignored`
-- [ ] T035 Update `docs/krones-final-implementation-plan.md` only if SPEC-001 implementation changes the approved foundation structure
+- [X] T032 Validate required root files, configs, source packages, outputs, and tests against `specs/001-project-foundation/contracts/foundation-structure.md`
+- [X] T033 Run the quickstart validation commands documented in `specs/001-project-foundation/quickstart.md`
+- [X] T034 Confirm no private dataset files from `1st-krones-vision-ai-challenge/` or generated artifact contents are tracked using `git ls-files`, and confirm ignore behavior using `git status --short --ignored`
+- [X] T035 Update `docs/krones-final-implementation-plan.md` only if SPEC-001 implementation changes the approved foundation structure
 
 ---
 
