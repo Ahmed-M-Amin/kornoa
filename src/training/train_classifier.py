@@ -126,6 +126,7 @@ class TrainingRunConfig:
     imbalance_strategy: str = "weighted_bce"
     augmentation_recipe: str = "v1"
     hard_example_strategy: str = "none"
+    hard_example_source: str = "auto"
     weighted_sampler: bool = False
     focal_alpha: float = 0.25
     focal_gamma: float = 2.0
@@ -159,6 +160,7 @@ class ClassifierMetricsReport:
     experiment_name: str = "v1_effnet_b0"
     hard_example_strategy: str = "none"
     imbalance_strategy: str = "weighted_bce"
+    hard_example_source_used: str = ""
     split_disjointness: dict[str, object] = field(default_factory=dict)
 
 
@@ -262,6 +264,7 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         imbalance_strategy=str(cfg.get("imbalance_strategy", "focal_loss_weighted_sampler" if is_v2 else "weighted_bce")),
         augmentation_recipe=str(cfg.get("augmentation_recipe", "v2_safe" if is_v2 else "v1")),
         hard_example_strategy=str(cfg.get("hard_example_strategy", "analysis_only" if is_v2 else "none")),
+        hard_example_source=str(cfg.get("hard_example_source", "auto")),
         weighted_sampler=bool(cfg.get("weighted_sampler", is_v2)),
         focal_alpha=float(cfg.get("focal_alpha", 0.25)),
         focal_gamma=float(cfg.get("focal_gamma", 2.0)),
@@ -304,6 +307,8 @@ def _validate_v2_training_config(config: TrainingRunConfig) -> None:
         raise TrainingValidationError("classifier.num_classes must be 2")
     if config.hard_example_strategy not in V2_ALLOWED_HARD_EXAMPLE_STRATEGIES:
         raise TrainingValidationError("V2 hard_example_strategy must be none, analysis_only, or oversample")
+    if not config.hard_example_source:
+        raise TrainingValidationError("V2 hard_example_source must be a path or auto")
     if config.augmentation_recipe not in {"v1", "v2_safe"}:
         raise TrainingValidationError("V2 augmentation_recipe must be v1 or v2_safe")
     if config.speed_ceiling_multiplier > 2.0 or config.speed_ceiling_multiplier <= 0:
@@ -516,11 +521,24 @@ def run_training(
     )
     from src.training.hard_example_mining import prepare_hard_example_report
 
+    if active_config.hard_example_strategy == "oversample":
+        initial_hard_example_report = prepare_hard_example_report(
+            hard_example_source=hard_examples_root if hard_examples_root is not None else active_config.hard_example_source,
+            summary_path=hard_example_summary_path,
+            train_image_ids=[example.image_id for example in split.train],
+            validation_image_ids=[example.image_id for example in split.validation],
+            strategy="analysis_only",
+        )
+        split = exclude_hard_examples_from_validation(
+            split,
+            hard_example_image_ids=initial_hard_example_report.validation_excluded_image_ids,
+        )
+
     train_counts = _class_counts(split.train)
     validation_counts = _class_counts(split.validation)
     split_disjointness = report_split_disjointness(split)
     hard_example_report = prepare_hard_example_report(
-        hard_examples_root=hard_examples_root,
+        hard_example_source=hard_examples_root if hard_examples_root is not None else active_config.hard_example_source,
         summary_path=hard_example_summary_path,
         train_image_ids=[example.image_id for example in split.train],
         validation_image_ids=[example.image_id for example in split.validation],
@@ -658,6 +676,7 @@ def run_training(
             experiment_name=active_config.experiment_name,
             hard_example_strategy=active_config.hard_example_strategy,
             imbalance_strategy=active_config.imbalance_strategy,
+            hard_example_source_used=hard_example_report.hard_example_source_used,
             split_disjointness={
                 **split_disjointness,
                 "hard_examples": asdict(hard_example_report),
@@ -772,6 +791,29 @@ def report_split_disjointness(split: SplitAssignment) -> dict[str, object]:
         "train_validation_disjoint": not overlap,
         "overlap_image_ids": overlap,
     }
+
+
+def exclude_hard_examples_from_validation(
+    split: SplitAssignment,
+    *,
+    hard_example_image_ids: Sequence[str],
+) -> SplitAssignment:
+    """Move hard-example rows out of validation before explicit oversampling."""
+
+    hard_ids = set(hard_example_image_ids)
+    if not hard_ids:
+        return split
+    moved_to_train = [example for example in split.validation if example.image_id in hard_ids]
+    kept_validation = [example for example in split.validation if example.image_id not in hard_ids]
+    existing_train_ids = {example.image_id for example in split.train}
+    train = [
+        *split.train,
+        *(example for example in moved_to_train if example.image_id not in existing_train_ids),
+    ]
+    return SplitAssignment(
+        train=sorted(train, key=lambda item: item.image_id),
+        validation=sorted(kept_validation, key=lambda item: item.image_id),
+    )
 
 
 def validate_v2_scope_guards(options: dict[str, object]) -> None:

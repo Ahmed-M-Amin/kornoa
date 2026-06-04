@@ -57,10 +57,16 @@ def _make_binary_checkpoint(path: Path, model_name: str = "tiny_cnn") -> Path:
     return path
 
 
-def _make_v2_artifact_root(root: Path, *, model_name: str = "tiny_cnn", nested: bool = False) -> Path:
+def _make_v2_artifact_root(
+    root: Path,
+    *,
+    model_name: str = "tiny_cnn",
+    nested: bool = False,
+    experiment_name: str = "v2b_effnet_b1",
+) -> Path:
     artifact_root = root / "outputs" / "kaggle_v2"
     if nested:
-        artifact_root = artifact_root / "v2b_effnet_b1" / "kaggle_v2"
+        artifact_root = artifact_root / experiment_name / "kaggle_v2"
     if model_name == "tiny_cnn":
         _make_tiny_checkpoint(artifact_root / "models" / "classifier_best.pth")
     else:
@@ -102,6 +108,17 @@ def test_resolve_v2_artifact_root_supports_nested_experiment_parent(tmp_path):
     concrete_root = _make_v2_artifact_root(tmp_path, nested=True)
     experiment_root = concrete_root.parent
     paths = resolve_v2_artifact_paths(experiment_root)
+
+    assert paths.artifact_root == concrete_root
+    assert paths.model_path == concrete_root / "models" / "classifier_best.pth"
+    assert paths.threshold_path == concrete_root / "reports" / "best_threshold.json"
+
+
+def test_resolve_v2_artifact_root_supports_v2b_he_parent(tmp_path):
+    from src.inference.predict import resolve_v2_artifact_paths
+
+    concrete_root = _make_v2_artifact_root(tmp_path, nested=True, experiment_name="v2b_he_effnet_b1")
+    paths = resolve_v2_artifact_paths(concrete_root.parent)
 
     assert paths.artifact_root == concrete_root
     assert paths.model_path == concrete_root / "models" / "classifier_best.pth"

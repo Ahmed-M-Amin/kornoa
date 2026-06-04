@@ -7,7 +7,7 @@ import csv
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from src.inference.predict import DEFAULT_ARTIFACT_ROOT, DEFAULT_VALIDATION_PREDICTIONS_RELATIVE, load_threshold
 
@@ -62,6 +62,8 @@ class ResolvedHardExampleSources:
     hard_examples_root: Path
     summary_path: Path
     found: bool
+    hard_example_source_used: str
+    generated: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,10 +78,13 @@ class HardExampleSourceReport:
     count_mismatches: dict[str, dict[str, int]]
     eligible_for_training_count: int
     excluded_validation_count: int
+    validation_excluded_image_ids: list[str]
     used_for_oversampling_count: int
     train_validation_disjoint: bool
     excluded_rows: list[str]
     oversampled_image_ids: list[str]
+    oversampled_image_ids_by_group: dict[str, list[str]]
+    hard_example_source_used: str
 
 
 def mine_hard_examples(
@@ -161,6 +166,7 @@ def mine_hard_examples(
 def prepare_hard_example_report(
     *,
     hard_examples_root: str | Path | None = None,
+    hard_example_source: str | Path | None = None,
     summary_path: str | Path | None = None,
     train_image_ids: Sequence[str] = (),
     validation_image_ids: Sequence[str] = (),
@@ -169,7 +175,7 @@ def prepare_hard_example_report(
     """Load V1 hard-example source sets and report V2 leakage exclusions."""
 
     resolved = resolve_hard_example_sources(
-        hard_examples_root=hard_examples_root,
+        hard_example_source=hard_example_source if hard_example_source is not None else hard_examples_root,
         summary_path=summary_path,
     )
     root = resolved.hard_examples_root
@@ -187,10 +193,18 @@ def prepare_hard_example_report(
 
     train_set = set(train_image_ids)
     validation_set = set(validation_image_ids)
-    all_hard_ids = sorted({image_id for ids in loaded.values() for image_id in ids})
+    all_hard_ids = _ordered_unique([image_id for ids in loaded.values() for image_id in ids])
     unmapped = sorted(image_id for image_id in all_hard_ids if image_id not in train_set and image_id not in validation_set)
     validation_excluded = sorted(image_id for image_id in all_hard_ids if image_id in validation_set)
-    eligible = sorted(image_id for image_id in all_hard_ids if image_id in train_set)
+    eligible_by_group = {
+        group: [image_id for image_id in ids if image_id in train_set]
+        for group, ids in loaded.items()
+    }
+    eligible = _ordered_unique(
+        image_id
+        for group in _oversampling_group_priority()
+        for image_id in eligible_by_group.get(group, [])
+    )
     oversampled = eligible if strategy == "oversample" else []
     return HardExampleSourceReport(
         false_positives_path=paths["false_positives"],
@@ -203,33 +217,45 @@ def prepare_hard_example_report(
         count_mismatches=count_mismatches,
         eligible_for_training_count=len(eligible),
         excluded_validation_count=len(validation_excluded),
+        validation_excluded_image_ids=validation_excluded,
         used_for_oversampling_count=len(oversampled),
         train_validation_disjoint=not bool(train_set & validation_set),
         excluded_rows=[*unmapped, *validation_excluded],
         oversampled_image_ids=oversampled,
+        oversampled_image_ids_by_group=eligible_by_group if strategy == "oversample" else {},
+        hard_example_source_used=resolved.hard_example_source_used,
     )
 
 
 def resolve_hard_example_sources(
     *,
     hard_examples_root: str | Path | None = None,
+    hard_example_source: str | Path | None = None,
     summary_path: str | Path | None = None,
     search_roots: Sequence[str | Path] | None = None,
 ) -> ResolvedHardExampleSources:
-    """Resolve V1 hard-example memory from local, artifact, or Kaggle-style roots."""
+    """Resolve hard-example memory from explicit, V2, V1, local, or Kaggle-style sources."""
 
-    explicit_root = Path(hard_examples_root) if hard_examples_root is not None else None
+    requested_source = hard_example_source if hard_example_source is not None else hard_examples_root
+    explicit_root = None
+    if requested_source not in (None, "", "auto"):
+        explicit_root = Path(str(requested_source))
     explicit_summary = Path(summary_path) if summary_path is not None else (
         _summary_for_hard_root(explicit_root) if explicit_root is not None else DEFAULT_HARD_EXAMPLE_SUMMARY
     )
-    if explicit_root is not None and _has_hard_example_files(explicit_root):
-        return ResolvedHardExampleSources(explicit_root, explicit_summary, True)
+    if explicit_root is not None:
+        resolved = _resolve_source_root(explicit_root, explicit_summary)
+        if resolved is not None:
+            return resolved
 
     roots = [Path.cwd()] if search_roots is None else [Path(root) for root in search_roots]
     candidates: list[Path] = []
     for root in roots:
         candidates.extend(
             [
+                root / "artifacts" / "kaggle_v2b_he_artifacts" / "hard_examples",
+                root / "artifacts" / "kaggle_v2b_artifacts" / "hard_examples",
+                root / "artifacts" / "kaggle_v2b_artifacts" / "outputs" / "hard_examples",
                 root / "artifacts" / "kaggle_v1_artifacts" / "outputs" / "hard_examples",
                 root / "outputs" / "hard_examples",
             ]
@@ -241,11 +267,12 @@ def resolve_hard_example_sources(
         candidates.extend(sorted(kaggle_input.glob("*/*/outputs/hard_examples")))
 
     for candidate in candidates:
-        if _has_hard_example_files(candidate):
-            return ResolvedHardExampleSources(candidate, _summary_for_hard_root(candidate), True)
+        resolved = _resolve_source_root(candidate, _summary_for_hard_root(candidate))
+        if resolved is not None:
+            return resolved
 
     fallback_root = explicit_root if explicit_root is not None else DEFAULT_HARD_EXAMPLES_DIR
-    return ResolvedHardExampleSources(fallback_root, explicit_summary, False)
+    return ResolvedHardExampleSources(fallback_root, explicit_summary, False, str(fallback_root))
 
 
 def _resolve_artifact_root(root: str | Path) -> Path:
@@ -259,6 +286,76 @@ def _has_hard_example_files(root: Path) -> bool:
 
 def _summary_for_hard_root(root: Path) -> Path:
     return root.parent / "reports" / "hard_example_summary.json"
+
+
+def _resolve_source_root(source: Path, summary_path: Path | None = None) -> ResolvedHardExampleSources | None:
+    hard_root = _find_hard_examples_root(source)
+    if hard_root is not None:
+        return ResolvedHardExampleSources(
+            hard_examples_root=hard_root,
+            summary_path=summary_path if summary_path is not None and summary_path.exists() else _summary_for_hard_root(hard_root),
+            found=True,
+            hard_example_source_used=str(hard_root),
+            generated=False,
+        )
+
+    prediction_path, threshold_path = _find_prediction_and_threshold(source)
+    if prediction_path is None or threshold_path is None:
+        return None
+
+    output_dir = source / "hard_examples"
+    generated_summary = source / "reports" / "hard_example_summary.json"
+    mine_hard_examples(
+        predictions_path=prediction_path,
+        threshold_path=threshold_path,
+        output_dir=output_dir,
+        summary_path=generated_summary,
+    )
+    return ResolvedHardExampleSources(
+        hard_examples_root=output_dir,
+        summary_path=generated_summary,
+        found=True,
+        hard_example_source_used=str(source),
+        generated=True,
+    )
+
+
+def _find_hard_examples_root(source: Path) -> Path | None:
+    if _has_hard_example_files(source):
+        return source
+    direct = source / "hard_examples"
+    if _has_hard_example_files(direct):
+        return direct
+    if not source.exists() or not source.is_dir():
+        return None
+    for candidate in sorted(source.rglob("hard_examples")):
+        if candidate.is_dir() and _has_hard_example_files(candidate):
+            return candidate
+    return None
+
+
+def _find_prediction_and_threshold(source: Path) -> tuple[Path | None, Path | None]:
+    if not source.exists():
+        return None, None
+    if source.is_file():
+        return None, None
+    predictions = sorted(source.rglob("val_classifier_predictions.csv"))
+    thresholds = sorted(source.rglob("best_threshold.json"))
+    return (predictions[0] if predictions else None, thresholds[0] if thresholds else None)
+
+
+def _oversampling_group_priority() -> tuple[str, ...]:
+    return ("false_negatives", "false_positives", "uncertain", "high_loss_samples")
+
+
+def _ordered_unique(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        if value not in seen:
+            output.append(value)
+            seen.add(value)
+    return output
 
 
 def _load_image_ids(path: Path) -> list[str]:

@@ -22,6 +22,7 @@ classifier:
   focal_gamma: 2.0
   augmentation_recipe: "v2_safe"
   hard_example_strategy: "analysis_only"
+  hard_example_source: "auto"
   speed_ceiling_multiplier: 2.0
   close_f1_tolerance: 0.002
 
