@@ -482,8 +482,8 @@ def run_training(
     synthetic_smoke: bool = False,
     seed: Optional[int] = None,
     epochs: Optional[int] = None,
-    hard_examples_root: str | Path = "outputs/hard_examples",
-    hard_example_summary_path: str | Path = "outputs/reports/hard_example_summary.json",
+    hard_examples_root: str | Path | None = None,
+    hard_example_summary_path: str | Path | None = None,
     v1_baseline: Optional[V1BaselineRecord] = None,
 ) -> TrainingRunResult:
     """Run a reproducible binary classifier training pass."""

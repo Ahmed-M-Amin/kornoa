@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.training.hard_example_mining import prepare_hard_example_report
+from src.training.hard_example_mining import prepare_hard_example_report, resolve_hard_example_sources
 from src.training.train_classifier import (
     V2_MODEL_OUTPUT,
     V2_PREDICTIONS_OUTPUT,
@@ -98,6 +98,32 @@ def test_hard_example_oversampling_only_when_explicit(tmp_path):
     assert "missing_a" in oversample.excluded_rows
     assert build_hard_example_weight_map(analysis, strategy="analysis_only") == {}
     assert build_hard_example_weight_map(oversample, strategy="oversample") == {"train_a": 2.0}
+
+
+def test_hard_example_resolver_finds_v1_artifact_memory(tmp_path):
+    hard_root = tmp_path / "artifacts" / "kaggle_v1_artifacts" / "outputs" / "hard_examples"
+    _write_hard_example_csv(hard_root / "false_positives.csv", ["train_a"])
+    _write_hard_example_csv(hard_root / "false_negatives.csv", ["train_b"])
+    summary = hard_root.parent / "reports" / "hard_example_summary.json"
+    summary.parent.mkdir(parents=True, exist_ok=True)
+    summary.write_text(
+        '{"counts":{"false_positives":1,"false_negatives":1,"uncertain":0,"high_loss_samples":0}}',
+        encoding="utf-8",
+    )
+
+    resolved = resolve_hard_example_sources(search_roots=[tmp_path])
+    report = prepare_hard_example_report(
+        hard_examples_root=resolved.hard_examples_root,
+        summary_path=resolved.summary_path,
+        train_image_ids=["train_a", "train_b"],
+        validation_image_ids=[],
+        strategy="analysis_only",
+    )
+
+    assert resolved.hard_examples_root == hard_root
+    assert report.loaded_counts["false_positives"] == 1
+    assert report.loaded_counts["false_negatives"] == 1
+    assert report.used_for_oversampling_count == 0
 
 
 def test_split_disjointness_is_reported():

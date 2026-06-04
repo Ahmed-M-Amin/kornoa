@@ -25,6 +25,12 @@ DEFAULT_HARD_EXAMPLE_OUTPUTS = [
     DEFAULT_HIGH_LOSS_OUTPUT,
     DEFAULT_HARD_EXAMPLE_SUMMARY,
 ]
+HARD_EXAMPLE_FILENAMES = {
+    "false_positives": "false_positives.csv",
+    "false_negatives": "false_negatives.csv",
+    "uncertain": "uncertain.csv",
+    "high_loss_samples": "high_loss_samples.csv",
+}
 
 
 class HardExampleMiningError(ValueError):
@@ -49,6 +55,13 @@ class HardExampleMiningResult:
     uncertain_path: Path
     high_loss_samples_path: Path
     summary_path: Path
+
+
+@dataclass(frozen=True)
+class ResolvedHardExampleSources:
+    hard_examples_root: Path
+    summary_path: Path
+    found: bool
 
 
 @dataclass(frozen=True)
@@ -147,24 +160,25 @@ def mine_hard_examples(
 
 def prepare_hard_example_report(
     *,
-    hard_examples_root: str | Path = DEFAULT_HARD_EXAMPLES_DIR,
-    summary_path: str | Path = DEFAULT_HARD_EXAMPLE_SUMMARY,
+    hard_examples_root: str | Path | None = None,
+    summary_path: str | Path | None = None,
     train_image_ids: Sequence[str] = (),
     validation_image_ids: Sequence[str] = (),
     strategy: str = "analysis_only",
 ) -> HardExampleSourceReport:
     """Load V1 hard-example source sets and report V2 leakage exclusions."""
 
-    root = Path(hard_examples_root)
+    resolved = resolve_hard_example_sources(
+        hard_examples_root=hard_examples_root,
+        summary_path=summary_path,
+    )
+    root = resolved.hard_examples_root
     paths = {
-        "false_positives": root / "false_positives.csv",
-        "false_negatives": root / "false_negatives.csv",
-        "uncertain": root / "uncertain.csv",
-        "high_loss_samples": root / "high_loss_samples.csv",
+        name: root / filename for name, filename in HARD_EXAMPLE_FILENAMES.items()
     }
     loaded: dict[str, list[str]] = {name: _load_image_ids(path) for name, path in paths.items()}
     loaded_counts = {name: len(ids) for name, ids in loaded.items()}
-    summary_counts = _load_summary_counts(Path(summary_path))
+    summary_counts = _load_summary_counts(resolved.summary_path)
     count_mismatches = {
         name: {"loaded": loaded_counts.get(name, 0), "summary": summary_counts.get(name, 0)}
         for name in sorted(set(loaded_counts) | set(summary_counts))
@@ -183,7 +197,7 @@ def prepare_hard_example_report(
         false_negatives_path=paths["false_negatives"],
         uncertain_path=paths["uncertain"],
         high_loss_samples_path=paths["high_loss_samples"],
-        summary_path=Path(summary_path),
+        summary_path=resolved.summary_path,
         loaded_counts=loaded_counts,
         summary_counts=summary_counts,
         count_mismatches=count_mismatches,
@@ -196,9 +210,55 @@ def prepare_hard_example_report(
     )
 
 
+def resolve_hard_example_sources(
+    *,
+    hard_examples_root: str | Path | None = None,
+    summary_path: str | Path | None = None,
+    search_roots: Sequence[str | Path] | None = None,
+) -> ResolvedHardExampleSources:
+    """Resolve V1 hard-example memory from local, artifact, or Kaggle-style roots."""
+
+    explicit_root = Path(hard_examples_root) if hard_examples_root is not None else None
+    explicit_summary = Path(summary_path) if summary_path is not None else (
+        _summary_for_hard_root(explicit_root) if explicit_root is not None else DEFAULT_HARD_EXAMPLE_SUMMARY
+    )
+    if explicit_root is not None and _has_hard_example_files(explicit_root):
+        return ResolvedHardExampleSources(explicit_root, explicit_summary, True)
+
+    roots = [Path.cwd()] if search_roots is None else [Path(root) for root in search_roots]
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.extend(
+            [
+                root / "artifacts" / "kaggle_v1_artifacts" / "outputs" / "hard_examples",
+                root / "outputs" / "hard_examples",
+            ]
+        )
+
+    kaggle_input = Path("/kaggle/input")
+    if kaggle_input.exists():
+        candidates.extend(sorted(kaggle_input.glob("*/outputs/hard_examples")))
+        candidates.extend(sorted(kaggle_input.glob("*/*/outputs/hard_examples")))
+
+    for candidate in candidates:
+        if _has_hard_example_files(candidate):
+            return ResolvedHardExampleSources(candidate, _summary_for_hard_root(candidate), True)
+
+    fallback_root = explicit_root if explicit_root is not None else DEFAULT_HARD_EXAMPLES_DIR
+    return ResolvedHardExampleSources(fallback_root, explicit_summary, False)
+
+
 def _resolve_artifact_root(root: str | Path) -> Path:
     raw = Path(root)
     return raw / "kaggle_v1" if (raw / "kaggle_v1").is_dir() else raw
+
+
+def _has_hard_example_files(root: Path) -> bool:
+    return any((root / filename).exists() for filename in HARD_EXAMPLE_FILENAMES.values())
+
+
+def _summary_for_hard_root(root: Path) -> Path:
+    return root.parent / "reports" / "hard_example_summary.json"
 
 
 def _load_image_ids(path: Path) -> list[str]:
