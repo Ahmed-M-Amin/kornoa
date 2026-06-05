@@ -10,6 +10,15 @@
 
 Implement the V2 strong classifier stage after completed V1 training and SPEC-006 evaluation. The plan keeps V2 as a single lightweight classifier by default, improves the classifier recipe through imbalance handling, stronger safe augmentation, optional hard-example oversampling, and controlled backbone/image-size experiments, then selects the best candidate by validation F1 after threshold search. V2 must target at least +0.02 validation F1 over the V1 baseline of 0.91656 while treating 2x V1 inference time as the maximum allowed speed cost, not the target. Close validation F1 means absolute validation F1 difference <= 0.002; candidates within that tolerance select the faster model. Detector, segmentation, Grad-CAM, dashboard, feature memory bank, ensemble default, distillation, and hybrid inference remain out of scope.
 
+## Experiment Results Through V2B-HE
+
+- Current best public model: V2B EfficientNet-B1, 384x384, `hard_example_strategy=analysis_only`, public F1 `0.92121`.
+- Valid but slightly worse run: V2A-remake, public F1 `0.92093`.
+- Rejected run: V2B-HE oversample. Local validation F1 was `0.974077`, public F1 dropped to `0.90293`, `used_for_oversampling_count=806`, `train_validation_disjoint=true`, and inference speed stayed good at about `25.16` images/sec.
+- Diagnosis: oversampling worked technically but overfit and did not generalize. The hard-example source resolved to nested `v1-artifacts` inside the V2B artifact package, not true V2B-generated hard examples.
+- Planning consequence: high local F1 is not sufficient evidence of Kaggle/public generalization. Hard-example oversampling must remain disabled by default and must not be retried without fixed source selection plus overfitting controls.
+- Next documented experiment: V2C EfficientNet-B2, 384x384, focal loss, weighted sampler, `hard_example_strategy=analysis_only`, with benchmark required. Accept B2 only if public F1 improves meaningfully over V2B `0.92121` and runtime remains acceptable.
+
 ## Technical Context
 
 **Language/Version**: Python 3.11 target, compatible with the current local Python test environment.
@@ -18,15 +27,15 @@ Implement the V2 strong classifier stage after completed V1 training and SPEC-00
 
 **Storage**: Filesystem only. V1 baseline inputs come from `artifacts/kaggle_v1_artifacts/outputs/kaggle_v1` and SPEC-006 outputs under ignored `outputs/`. V2 generated outputs are written under ignored `outputs/kaggle_v2/models/`, `outputs/kaggle_v2/reports/`, `outputs/kaggle_v2/predictions/`, `outputs/kaggle_v2/submissions/`, and `outputs/kaggle_v2/benchmarks/`.
 
-**Testing**: Pytest with synthetic image fixtures and synthetic hard-example CSV fixtures. Tests should cover V2 configuration validation, focal loss behavior, weighted sampler construction, safe augmentation boundaries, hard-example strategy defaults, oversampling only when explicitly enabled, hard-example validation-split exclusion, split-disjointness reporting, threshold-search selection, V1-vs-V2 comparison reporting, no inference-time hard-example memory, and generated-output ignore validation.
+**Testing**: Pytest with synthetic image fixtures and synthetic hard-example CSV fixtures. Tests should cover V2 configuration validation, focal loss behavior, weighted sampler construction, safe augmentation boundaries, hard-example strategy defaults, oversampling only when explicitly enabled, hard-example validation-split exclusion, split-disjointness reporting, threshold-search selection, V1-vs-V2 comparison reporting, no inference-time hard-example memory, generated-output ignore validation, and explicit V2 hard-example source safety.
 
 **Target Platform**: Local Windows development first, with path/config behavior compatible with Kaggle and Google Colab free-tier GPU execution.
 
 **Project Type**: Single Python computer-vision training and inference project.
 
-**Performance Goals**: Selected V2 targets at least +0.02 validation F1 over V1's 0.91656 and should attempt stronger results toward 0.95+ when speed remains acceptable. V2 inference must be no more than 2x slower than the V1 benchmark. Close F1 means absolute validation F1 difference <= 0.002; candidates within that tolerance prefer the faster model.
+**Performance Goals**: Selected V2 targets at least +0.02 validation F1 over V1's 0.91656 and should attempt stronger results toward 0.95+ when speed remains acceptable, but public/Kaggle generalization and runtime decide whether a run is accepted. Current accepted best public V2 is V2B EfficientNet-B1 `analysis_only` with public F1 `0.92121`. V2 inference must be no more than 2x slower than the V1 benchmark. Close F1 means absolute validation F1 difference <= 0.002; candidates within that tolerance prefer the faster model.
 
-**Constraints**: Preserve `0 = Reusable` and `1 = Not Reusable`; default inference remains one classifier with ROI/preprocess, threshold, and target; 384x384 is the baseline image size; 448x448 is optional only after 384x384 experiments; hard examples are offline training/analysis inputs only; allowed hard-example strategies are `none`, `analysis_only`, and `oversample`; the default strategy is `analysis_only`; oversampling must be explicitly enabled with `hard_example_strategy=oversample`; any hard-example image ID used for oversampling must be excluded from the current V2 validation split; test images and Kaggle public feedback cannot be used for training, threshold tuning, or model selection; no detector, segmentation, Grad-CAM, dashboard, feature memory bank, default ensemble, distillation, or hybrid inference.
+**Constraints**: Preserve `0 = Reusable` and `1 = Not Reusable`; default inference remains one classifier with ROI/preprocess, threshold, and target; 384x384 is the baseline image size; 448x448 is optional only after 384x384 experiments; hard examples are offline training/analysis inputs only; allowed hard-example strategies are `none`, `analysis_only`, and `oversample`; the default strategy is `analysis_only`; oversampling must be explicitly enabled with `hard_example_strategy=oversample`; any hard-example image ID used for oversampling must be excluded from the current V2 validation split; explicit V2 artifact hard-example sources must generate from V2 predictions before existing memory and must not silently resolve nested `v1-artifacts`; test images and Kaggle public feedback cannot be used for training, threshold tuning, or model selection; no detector, segmentation, Grad-CAM, dashboard, feature memory bank, default ensemble, distillation, or hybrid inference.
 
 **Scale/Scope**: SPEC-007 covers V2 classifier training/evaluation, V2 submission generation through the existing classifier-only inference path, V2 benchmark reporting, and mandatory V1-vs-V2 comparison. It does not start later roadmap modules.
 

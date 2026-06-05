@@ -42,7 +42,7 @@ Represents one candidate V2 experiment.
 
 ## HardExampleSourceSet
 
-Represents validation-derived V1 mistake files used for V2 training analysis or oversampling.
+Represents validation-derived hard-example mistake files used for V2 training analysis or explicitly enabled oversampling.
 
 **Fields**:
 - `false_positives_path`
@@ -50,6 +50,8 @@ Represents validation-derived V1 mistake files used for V2 training analysis or 
 - `uncertain_path`
 - `high_loss_samples_path`
 - `summary_path`
+- `hard_example_source_used`
+- `hard_example_source_type`: `v1_memory`, `v2_generated_memory`, or `explicit_existing_memory`
 - `loaded_counts`
 - `eligible_for_training_count`
 - `excluded_validation_count`
@@ -62,6 +64,8 @@ Represents validation-derived V1 mistake files used for V2 training analysis or 
 - Rows not matching training or validation image IDs are excluded and reported.
 - Rows may be used for V2 training oversampling only when their image IDs are absent from the current V2 validation split.
 - Training and validation image ID sets must be disjoint before hard-example oversampling begins.
+- If an explicit V2 artifact source contains `val_classifier_predictions.csv` and `best_threshold.json`, hard examples are generated from those V2 predictions before existing hard-example memory is used.
+- Explicit V2 artifact sources must not silently resolve nested `v1-artifacts/outputs/hard_examples`; this must warn or fail.
 - Hard-example sources are never used during normal V2 inference, submission generation, or benchmarking.
 
 ## V2CandidateResult

@@ -63,6 +63,7 @@ class ResolvedHardExampleSources:
     summary_path: Path
     found: bool
     hard_example_source_used: str
+    hard_example_source_type: str
     generated: bool = False
 
 
@@ -85,6 +86,7 @@ class HardExampleSourceReport:
     oversampled_image_ids: list[str]
     oversampled_image_ids_by_group: dict[str, list[str]]
     hard_example_source_used: str
+    hard_example_source_type: str
 
 
 def mine_hard_examples(
@@ -224,6 +226,7 @@ def prepare_hard_example_report(
         oversampled_image_ids=oversampled,
         oversampled_image_ids_by_group=eligible_by_group if strategy == "oversample" else {},
         hard_example_source_used=resolved.hard_example_source_used,
+        hard_example_source_type=resolved.hard_example_source_type,
     )
 
 
@@ -244,7 +247,7 @@ def resolve_hard_example_sources(
         _summary_for_hard_root(explicit_root) if explicit_root is not None else DEFAULT_HARD_EXAMPLE_SUMMARY
     )
     if explicit_root is not None:
-        resolved = _resolve_source_root(explicit_root, explicit_summary)
+        resolved = _resolve_source_root(explicit_root, explicit_summary, explicit_source=True)
         if resolved is not None:
             return resolved
 
@@ -272,7 +275,13 @@ def resolve_hard_example_sources(
             return resolved
 
     fallback_root = explicit_root if explicit_root is not None else DEFAULT_HARD_EXAMPLES_DIR
-    return ResolvedHardExampleSources(fallback_root, explicit_summary, False, str(fallback_root))
+    return ResolvedHardExampleSources(
+        fallback_root,
+        explicit_summary,
+        False,
+        str(fallback_root),
+        _source_type_for_existing_memory(fallback_root, explicit_source=explicit_root is not None),
+    )
 
 
 def _resolve_artifact_root(root: str | Path) -> Path:
@@ -288,17 +297,36 @@ def _summary_for_hard_root(root: Path) -> Path:
     return root.parent / "reports" / "hard_example_summary.json"
 
 
-def _resolve_source_root(source: Path, summary_path: Path | None = None) -> ResolvedHardExampleSources | None:
+def _resolve_source_root(
+    source: Path,
+    summary_path: Path | None = None,
+    *,
+    explicit_source: bool = False,
+) -> ResolvedHardExampleSources | None:
+    if explicit_source and _looks_like_v2_artifact_source(source):
+        generated = _generate_from_v2_predictions(source)
+        if generated is not None:
+            return generated
+
     hard_root = _find_hard_examples_root(source)
     if hard_root is not None:
+        if explicit_source and _looks_like_v2_artifact_source(source) and _path_contains_v1_artifacts(hard_root):
+            raise HardExampleMiningError(
+                f"Explicit V2 hard_example_source resolved to nested V1 hard examples: {hard_root}"
+            )
         return ResolvedHardExampleSources(
             hard_examples_root=hard_root,
             summary_path=summary_path if summary_path is not None and summary_path.exists() else _summary_for_hard_root(hard_root),
             found=True,
             hard_example_source_used=str(hard_root),
+            hard_example_source_type=_source_type_for_existing_memory(hard_root, explicit_source=explicit_source),
             generated=False,
         )
 
+    return _generate_from_v2_predictions(source)
+
+
+def _generate_from_v2_predictions(source: Path) -> ResolvedHardExampleSources | None:
     prediction_path, threshold_path = _find_prediction_and_threshold(source)
     if prediction_path is None or threshold_path is None:
         return None
@@ -316,6 +344,7 @@ def _resolve_source_root(source: Path, summary_path: Path | None = None) -> Reso
         summary_path=generated_summary,
         found=True,
         hard_example_source_used=str(source),
+        hard_example_source_type="v2_generated_memory",
         generated=True,
     )
 
@@ -339,9 +368,41 @@ def _find_prediction_and_threshold(source: Path) -> tuple[Path | None, Path | No
         return None, None
     if source.is_file():
         return None, None
-    predictions = sorted(source.rglob("val_classifier_predictions.csv"))
-    thresholds = sorted(source.rglob("best_threshold.json"))
+    preferred_predictions = [
+        source / "kaggle_v2" / "predictions" / "val_classifier_predictions.csv",
+        source / "outputs" / "kaggle_v2" / "predictions" / "val_classifier_predictions.csv",
+        source / "predictions" / "val_classifier_predictions.csv",
+    ]
+    preferred_thresholds = [
+        source / "kaggle_v2" / "reports" / "best_threshold.json",
+        source / "outputs" / "kaggle_v2" / "reports" / "best_threshold.json",
+        source / "reports" / "best_threshold.json",
+    ]
+    predictions = [path for path in preferred_predictions if path.exists()]
+    thresholds = [path for path in preferred_thresholds if path.exists()]
+    if not predictions:
+        predictions = sorted(path for path in source.rglob("val_classifier_predictions.csv") if not _path_contains_v1_artifacts(path))
+    if not thresholds:
+        thresholds = sorted(path for path in source.rglob("best_threshold.json") if not _path_contains_v1_artifacts(path))
     return (predictions[0] if predictions else None, thresholds[0] if thresholds else None)
+
+
+def _looks_like_v2_artifact_source(source: Path) -> bool:
+    normalized = str(source).replace("\\", "/").lower()
+    return "v2" in normalized
+
+
+def _path_contains_v1_artifacts(path: Path) -> bool:
+    normalized = str(path).replace("\\", "/").lower()
+    return any(token in normalized for token in ("v1-artifacts", "kaggle_v1_artifacts", "/kaggle_v1/"))
+
+
+def _source_type_for_existing_memory(path: Path, *, explicit_source: bool) -> str:
+    if _path_contains_v1_artifacts(path):
+        return "v1_memory"
+    if explicit_source:
+        return "explicit_existing_memory"
+    return "explicit_existing_memory"
 
 
 def _oversampling_group_priority() -> tuple[str, ...]:

@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from src.training.hard_example_mining import prepare_hard_example_report, resolve_hard_example_sources
+from src.training.hard_example_mining import HardExampleMiningError, prepare_hard_example_report, resolve_hard_example_sources
 from src.training.train_classifier import (
     V2_MODEL_OUTPUT,
     V2_METRICS_OUTPUT,
@@ -141,12 +141,12 @@ def test_explicit_v2b_artifact_source_can_be_used(tmp_path):
     )
 
     assert report.hard_example_source_used == str(hard_root)
+    assert report.hard_example_source_type == "explicit_existing_memory"
     assert report.loaded_counts["false_negatives"] == 1
     assert report.used_for_oversampling_count == 1
 
 
-def test_explicit_source_generates_hard_examples_from_predictions_and_threshold(tmp_path):
-    source = tmp_path / "artifacts" / "kaggle_v2b_artifacts"
+def _write_v2_predictions_and_threshold(source: Path) -> None:
     predictions = source / "kaggle_v2" / "predictions" / "val_classifier_predictions.csv"
     threshold = source / "kaggle_v2" / "reports" / "best_threshold.json"
     predictions.parent.mkdir(parents=True, exist_ok=True)
@@ -160,6 +160,11 @@ def test_explicit_source_generates_hard_examples_from_predictions_and_threshold(
     )
     threshold.write_text(json.dumps({"threshold": 0.5}), encoding="utf-8")
 
+
+def test_explicit_source_generates_hard_examples_from_predictions_and_threshold(tmp_path):
+    source = tmp_path / "artifacts" / "kaggle_v2b_artifacts"
+    _write_v2_predictions_and_threshold(source)
+
     resolved = resolve_hard_example_sources(hard_example_source=source)
     report = prepare_hard_example_report(
         hard_example_source=source,
@@ -169,6 +174,7 @@ def test_explicit_source_generates_hard_examples_from_predictions_and_threshold(
     )
 
     assert resolved.generated is True
+    assert resolved.hard_example_source_type == "v2_generated_memory"
     assert (source / "hard_examples" / "false_negatives.csv").exists()
     assert (source / "hard_examples" / "false_positives.csv").exists()
     assert (source / "hard_examples" / "uncertain.csv").exists()
@@ -176,6 +182,34 @@ def test_explicit_source_generates_hard_examples_from_predictions_and_threshold(
     assert report.loaded_counts["false_negatives"] == 1
     assert report.loaded_counts["false_positives"] == 1
     assert report.used_for_oversampling_count == 2
+    assert report.hard_example_source_type == "v2_generated_memory"
+
+
+def test_explicit_v2_source_prefers_generated_predictions_over_nested_v1_memory(tmp_path):
+    source = tmp_path / "artifacts" / "kaggle_v2b_artifacts"
+    _write_v2_predictions_and_threshold(source)
+    nested_v1 = source / "v1-artifacts" / "outputs" / "hard_examples"
+    _write_hard_example_csv(nested_v1 / "false_negatives.csv", ["nested_v1_fn"])
+
+    report = prepare_hard_example_report(
+        hard_example_source=source,
+        train_image_ids=["fn_id", "fp_id", "nested_v1_fn"],
+        validation_image_ids=[],
+        strategy="oversample",
+    )
+
+    assert report.hard_example_source_type == "v2_generated_memory"
+    assert "v1-artifacts" not in report.hard_example_source_used
+    assert report.oversampled_image_ids == ["fn_id", "fp_id"]
+
+
+def test_explicit_v2_source_rejects_nested_v1_memory_without_v2_predictions(tmp_path):
+    source = tmp_path / "artifacts" / "kaggle_v2b_artifacts"
+    nested_v1 = source / "v1-artifacts" / "outputs" / "hard_examples"
+    _write_hard_example_csv(nested_v1 / "false_negatives.csv", ["nested_v1_fn"])
+
+    with pytest.raises(HardExampleMiningError, match="nested V1 hard examples"):
+        resolve_hard_example_sources(hard_example_source=source)
 
 
 def test_auto_falls_back_to_v1_hard_examples_when_no_v2_source_exists(tmp_path):
@@ -191,6 +225,7 @@ def test_auto_falls_back_to_v1_hard_examples_when_no_v2_source_exists(tmp_path):
     )
 
     assert resolved.hard_examples_root == hard_root
+    assert resolved.hard_example_source_type == "v1_memory"
     assert report.loaded_counts["false_negatives"] == 1
     assert report.used_for_oversampling_count == 0
 

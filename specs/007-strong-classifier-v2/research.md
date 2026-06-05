@@ -48,6 +48,18 @@
 
 **Alternatives considered**: Oversampling by default was rejected because it can silently change training composition and increase leakage risk. Feature memory bank and inference-time hard-example lookup were rejected for SPEC-007 because they are later optional research and would slow normal inference.
 
+## Decision: Reject V2B-HE oversampling as a model-selection path
+
+**Rationale**: V2B-HE oversampling produced high local validation F1 (`0.974077`) but public F1 fell to `0.90293`, despite good inference speed around `25.16` images/sec and confirmed train/validation disjointness. The run used `806` oversampled examples and resolved hard examples from nested `v1-artifacts` inside a V2B artifact package rather than true V2B-generated hard examples. This shows both overfitting risk and source-selection risk.
+
+**Alternatives considered**: Keeping V2B-HE because of local validation F1 was rejected because public/Kaggle generalization is the relevant external check. Retrying hard-example oversampling immediately was rejected until source selection is fixed and overfitting controls exist.
+
+## Decision: Prefer explicit V2 prediction-derived hard examples over nested existing memory
+
+**Rationale**: When `hard_example_source` points at a V2 artifact folder and both `val_classifier_predictions.csv` and `best_threshold.json` exist, hard examples must be generated from those V2 outputs first. This prevents accidental reuse of nested V1 memories when the experiment explicitly asks for V2B artifacts. Reports must include `hard_example_source_type` with values such as `v1_memory`, `v2_generated_memory`, or `explicit_existing_memory`.
+
+**Alternatives considered**: Recursive hard-example discovery alone was rejected because it can silently select stale nested memories. Using nested `v1-artifacts` from an explicit V2 source was rejected and must warn or fail.
+
 ## Decision: Use stronger safe training augmentation while keeping validation/test deterministic
 
 **Rationale**: Brightness/contrast, gamma, light blur/noise, and small rotation/shift/scale variation can improve robustness without changing labels. Validation/test preprocessing must remain deterministic for reproducible F1 and threshold search.

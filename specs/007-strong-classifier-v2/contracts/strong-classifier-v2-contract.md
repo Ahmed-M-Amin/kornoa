@@ -16,7 +16,8 @@ python -m src.training.train_classifier --config configs/classifier_v2.yaml
 - Training labels and images from the configured dataset root.
 - Existing ROI/preprocessing behavior from earlier specs.
 - V1 baseline artifacts for comparison.
-- Optional V1 hard-example files for offline analysis or explicitly enabled oversampling.
+- Optional validation-derived hard-example files for offline analysis or explicitly enabled oversampling.
+- Optional explicit V2 artifact source containing `val_classifier_predictions.csv` and `best_threshold.json` for V2-generated hard examples.
 
 **Required behavior**:
 - Report train and validation class counts before training.
@@ -26,6 +27,9 @@ python -m src.training.train_classifier --config configs/classifier_v2.yaml
 - Run hard-example oversampling only when `hard_example_strategy=oversample`.
 - Verify before oversampling that every hard-example image ID used for training is absent from the current V2 validation split.
 - Report hard-example rows loaded, eligible for training, excluded because they are in V2 validation, used for oversampling, and training/validation disjointness confirmation.
+- Report `hard_example_source_used` and `hard_example_source_type`.
+- When `hard_example_source` explicitly points to a V2 artifact folder with validation predictions and threshold, generate hard examples from those V2 outputs before using existing memory.
+- Warn or fail if an explicit V2 artifact source resolves to nested `v1-artifacts`.
 - Select best checkpoint by validation F1 after threshold search.
 - When candidate validation F1 differs by `<= 0.002`, select the faster candidate.
 - Save selected V2 artifacts under `outputs/kaggle_v2/`.
@@ -49,7 +53,7 @@ python -m src.training.train_classifier --config configs/classifier_v2.yaml --co
 - V1 classifier metrics.
 - V1 best threshold.
 - V1 benchmark report.
-- V1 hard-example summary or loaded hard-example CSV counts.
+- Hard-example summary or loaded hard-example CSV counts.
 - Selected V2 metrics, threshold, predictions, and benchmark.
 
 **Required behavior**:

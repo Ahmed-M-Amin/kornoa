@@ -7,6 +7,14 @@
 - SPEC-006 hard-example files are available under `outputs/hard_examples/` and `outputs/reports/hard_example_summary.json`.
 - Dataset paths are configured for local, Kaggle, or Colab execution.
 
+## Current Accepted Public Result
+
+- Current best public model is V2B EfficientNet-B1, 384x384, `hard_example_strategy=analysis_only`, public F1 `0.92121`.
+- V2A-remake is valid but slightly worse, public F1 `0.92093`.
+- V2B-HE oversample is rejected: local validation F1 `0.974077`, public F1 `0.90293`, `used_for_oversampling_count=806`, `train_validation_disjoint=true`, speed about `25.16` images/sec.
+- Do not change the accepted best model from V2B `analysis_only`.
+- High local F1 alone is not enough to accept a Kaggle competition model.
+
 ## Validate V1 Baseline Inputs
 
 ```powershell
@@ -19,36 +27,27 @@ Test-Path outputs/hard_examples/high_loss_samples.csv
 Test-Path outputs/benchmarks/v1_inference_benchmark.json
 ```
 
-## Run V2A First
+## Completed 384x384 Runs
 
-V2A is EfficientNet-B0 with the improved V2 recipe. It should establish whether imbalance handling, safer stronger augmentation, threshold search, and hard-example oversampling improve V1 without increasing backbone size.
+- V2A-remake: accepted as valid but not selected.
+- V2B `analysis_only`: selected as the current best public model.
+- V2B-HE oversample: rejected and must not be retried without fixing source selection and overfitting controls.
 
-```text
-python -m src.training.train_classifier --config configs/classifier_v2.yaml --experiment v2a_effnet_b0_recipe
-```
+## Next Planned Experiment
 
-## Run Larger Lightweight Candidates
-
-Run B1 and B2 only after V2A is reproducible.
+V2C is the next documentation-only planned experiment: EfficientNet-B2, 384x384, focal loss, weighted sampler, `hard_example_strategy=analysis_only`. Benchmarking is required. Accept B2 only if public F1 improves meaningfully over V2B `0.92121` and runtime remains acceptable.
 
 ```text
-python -m src.training.train_classifier --config configs/classifier_v2.yaml --experiment v2b_effnet_b1
 python -m src.training.train_classifier --config configs/classifier_v2.yaml --experiment v2c_effnet_b2
 ```
 
-ConvNeXt-Tiny is optional and must be speed-checked.
+## Hard-Example Source Safety
 
-```text
-python -m src.training.train_classifier --config configs/classifier_v2.yaml --experiment v2_optional_convnext_tiny
-```
-
-## Optional 448x448 Experiment
-
-Only run 448x448 after 384x384 candidates are complete and benchmarked.
-
-```text
-python -m src.training.train_classifier --config configs/classifier_v2.yaml --experiment v2_optional_448
-```
+- Default hard-example strategy remains `analysis_only`.
+- Heavy or training-composition-changing hard-example oversampling remains disabled by default.
+- If an explicit V2 artifact source contains `val_classifier_predictions.csv` and `best_threshold.json`, hard examples must be generated from those V2 predictions first.
+- An explicit V2 artifact source must not silently resolve nested `v1-artifacts/outputs/hard_examples`; warn or fail instead.
+- Future V2B-HE-like reports must not contain `v1-artifacts` in `hard_example_source_used` when the config explicitly asks for V2B artifacts.
 
 ## Generate V2 Submission
 
@@ -79,6 +78,7 @@ outputs/kaggle_v2/benchmarks/v2_inference_benchmark.json
 - V2 selected validation F1 targets at least `0.93656`.
 - V2 comparison reports the exact F1 delta versus V1.
 - V2 selected inference time is no more than `2x` V1.
+- Public F1 and benchmark runtime decide acceptance for new candidates; current accepted public best remains V2B `analysis_only` until a meaningful public improvement is measured.
 - Close-F1 candidates with absolute validation F1 difference `<= 0.002` prefer the faster model.
 - Default hard-example strategy is `analysis_only`.
 - Hard-example oversampling changes training composition only when `hard_example_strategy=oversample`.

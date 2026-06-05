@@ -18,6 +18,15 @@
 - Q: What is the default hard-example strategy? -> A: Allowed strategies are `none`, `analysis_only`, and `oversample`. The default is `analysis_only`; oversampling must be explicitly enabled with `hard_example_strategy=oversample`.
 - Q: How must V2 avoid leakage when using V1 hard-example rows for training? -> A: Hard-example rows may be used for V2 training only if those image IDs are excluded from the current V2 validation split. V2 must verify disjoint train/validation image IDs before any oversampling.
 
+### Session 2026-06-05
+
+- V2B EfficientNet-B1 at 384x384 with `hard_example_strategy=analysis_only` is accepted as the current best public model with Kaggle public F1 `0.92121`.
+- V2A-remake is accepted as a valid run but is slightly worse than V2B, with Kaggle public F1 `0.92093`.
+- V2B-HE oversample is rejected: local validation F1 was `0.974077`, public F1 dropped to `0.90293`, `used_for_oversampling_count=806`, `train_validation_disjoint=true`, and inference speed remained good at about `25.16` images/sec. The result shows that high local F1 does not guarantee Kaggle/public generalization.
+- V2B-HE hard-example oversampling worked technically but overfit and did not generalize. The hard-example source resolved to nested `v1-artifacts` inside the V2B artifact package, not true V2B-generated hard examples.
+- Hard-example oversampling is risky and must not be used again unless source selection is fixed and overfitting controls are added. The default remains `analysis_only`.
+- The next documented experiment is V2C EfficientNet-B2, 384x384, focal loss, weighted sampler, `hard_example_strategy=analysis_only`, with a required benchmark. Accept B2 only if public F1 improves meaningfully over V2B `0.92121` and runtime remains acceptable.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Train a Stronger Single Classifier (Priority: P1)
@@ -38,7 +47,7 @@ The practitioner can produce a V2 classifier candidate that improves meaningfull
 
 ### User Story 2 - Reduce V1 Mistakes With Hard Examples (Priority: P2)
 
-The practitioner can use V1 false positives, false negatives, uncertain cases, and high-loss samples as offline training and analysis inputs to improve the V2 classifier.
+The practitioner can use validation-derived false positives, false negatives, uncertain cases, and high-loss samples as offline training and analysis inputs to improve the V2 classifier.
 
 **Why this priority**: V1 produced hundreds of false positives and false negatives, and the existing hard-example files identify the highest-value mistakes to target before heavier future modules are considered.
 
@@ -46,7 +55,7 @@ The practitioner can use V1 false positives, false negatives, uncertain cases, a
 
 **Acceptance Scenarios**:
 
-1. **Given** V1 hard-example files, **When** V2 training input preparation runs, **Then** false-positive, false-negative, uncertain, and high-loss groups are available for oversampling or analysis.
+1. **Given** validation-derived hard-example files or V2 validation predictions plus a threshold, **When** V2 training input preparation runs, **Then** false-positive, false-negative, uncertain, and high-loss groups are available for oversampling or analysis.
 2. **Given** V2 submission generation or benchmark inference, **When** the workflow runs, **Then** hard-example memory does not run and no hard-example lookup affects predictions.
 3. **Given** expected V1 hard-example counts and loaded hard-example files, **When** counts differ between files or summaries, **Then** the discrepancy is reported in V2 comparison artifacts.
 
@@ -72,6 +81,8 @@ The practitioner can evaluate whether V2 is a true improvement by comparing accu
 - V1 hard-example files may have manually supplied counts or regenerated summary counts; V2 must report the loaded source counts and not silently overwrite the baseline story.
 - Hard-example CSV rows that no longer map to the training split are excluded from training input and reported.
 - Hard-example rows are derived from V1 validation predictions. They may be used for V2 training only if those image IDs are excluded from the current V2 validation split.
+- If `hard_example_source` explicitly points to a V2 artifact folder with `val_classifier_predictions.csv` and `best_threshold.json`, V2 must generate hard examples from those V2 predictions before considering existing hard-example memory.
+- An explicit V2 artifact source must not silently resolve to nested `v1-artifacts/outputs/hard_examples`; this must warn or fail, and future V2B-HE-like runs must not report `hard_example_source_used` containing `v1-artifacts` when V2B artifacts were requested.
 - V2 must create or verify split separation before any hard-example oversampling. Any image ID used for hard-example oversampling must not appear in V2 validation.
 - Validation and test preprocessing remain deterministic even when training augmentation is strengthened.
 - Augmentations must not remove visible defects, crop away the relevant bottle region, or delete internal dark regions that may indicate defects.
@@ -94,7 +105,7 @@ The practitioner can evaluate whether V2 is a true improvement by comparing accu
 - **FR-008**: System MUST support stronger safe training augmentation, including brightness and contrast variation, gamma correction, light blur or noise, and small rotation, shift, and scale variation.
 - **FR-009**: System MUST prohibit dangerous augmentation or cropping that removes defects, removes the useful bottle region, or deletes internal dark regions.
 - **FR-010**: System MUST keep validation and test preprocessing deterministic and comparable to the V1 evaluation path.
-- **FR-011**: System MUST use V1 hard-example files as offline training or analysis inputs only: `false_positives.csv`, `false_negatives.csv`, `uncertain.csv`, and `high_loss_samples.csv`.
+- **FR-011**: System MUST use validation-derived hard-example files as offline training or analysis inputs only: `false_positives.csv`, `false_negatives.csv`, `uncertain.csv`, and `high_loss_samples.csv`.
 - **FR-012**: System MUST NOT use hard-example memory during normal V2 inference, submission generation, or benchmarking.
 - **FR-013**: System MUST evaluate EfficientNet-B0 with an improved V2 recipe as V2A.
 - **FR-014**: System MUST evaluate EfficientNet-B1 as V2B.
@@ -116,6 +127,9 @@ The practitioner can evaluate whether V2 is a true improvement by comparing accu
 - **FR-030**: System MUST NOT change V2 training composition from hard examples unless `hard_example_strategy=oversample` is explicitly enabled.
 - **FR-031**: System MUST verify that any image ID used for hard-example oversampling is excluded from the current V2 validation split before oversampling begins.
 - **FR-032**: System MUST include hard-example split-leakage reporting in the V2 training report: hard-example rows loaded, eligible for training, excluded because they are in V2 validation, used for oversampling, and confirmation that training and validation image IDs are disjoint.
+- **FR-033**: System MUST report `hard_example_source_type` for hard-example sources, with values such as `v1_memory`, `v2_generated_memory`, and `explicit_existing_memory`.
+- **FR-034**: System MUST generate hard examples from explicit V2 artifact predictions before using existing hard-example memory when both `val_classifier_predictions.csv` and `best_threshold.json` exist.
+- **FR-035**: System MUST warn or fail if an explicit V2 artifact hard-example source resolves to nested `v1-artifacts`.
 
 ### Constitution Alignment *(mandatory)*
 
@@ -132,7 +146,7 @@ The practitioner can evaluate whether V2 is a true improvement by comparing accu
 
 - **V1 Baseline Record**: Completed V1 metrics, threshold, benchmark, submission, and hard-example counts used as the required comparison baseline.
 - **V2 Candidate**: A single classifier experiment defined by backbone family, image size, imbalance strategy, augmentation recipe, hard-example usage, threshold, and validation results.
-- **Hard-Example Source Set**: Validation-derived V1 false positives, false negatives, uncertain samples, and high-loss samples used only for training analysis or oversampling.
+- **Hard-Example Source Set**: Validation-derived false positives, false negatives, uncertain samples, and high-loss samples used only for training analysis or explicitly enabled oversampling.
 - **Threshold Record**: Saved threshold selected from validation predictions and used to convert class-1 probability into the binary target.
 - **Comparison Report**: Required V1-vs-V2 artifact containing accuracy, error counts, threshold, speed, backbone, model size, image size, and Kaggle public score when available.
 - **V2 Output Set**: Local ignored artifacts expected after implementation: model checkpoint, classifier metrics, best threshold, validation predictions, submission, benchmark, and comparison report.
@@ -155,6 +169,8 @@ The practitioner can evaluate whether V2 is a true improvement by comparing accu
 
 - SPEC-001 through SPEC-006 are complete and should only be referenced by SPEC-007.
 - V1 completed with EfficientNet-B0 at 384x384, validation F1 approximately 0.91656, Kaggle public score approximately 0.91693, and best threshold 0.48.
+- Current best public V2 remains V2B EfficientNet-B1 at 384x384 with `analysis_only`, public F1 `0.92121`.
+- V2B-HE oversampling is rejected despite high local validation F1 because public F1 dropped to `0.90293`.
 - The local V1 metrics artifact currently records class counts, confusion counts, runtime, device, weights, and threshold metadata.
 - The V1 hard-example baseline is expected to include false positives, false negatives, uncertain samples, and high-loss samples; loaded counts must be reported because manually supplied and regenerated hard-example summaries may differ.
 - V2's default deliverable is one fast classifier, not a large model, ensemble, detector, or hybrid system.

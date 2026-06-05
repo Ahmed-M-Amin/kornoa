@@ -163,6 +163,19 @@
 
 ---
 
+## Phase 7: Controlled Post-V2B-HE Update
+
+**Purpose**: Record real V2B/V2B-HE public results, preserve the accepted V2B `analysis_only` model, and harden V2 hard-example source selection without starting training.
+
+- [X] T083 Record V2B `analysis_only` as current best public model: EfficientNet-B1, 384x384, public F1 `0.92121`
+- [X] T084 Record V2A-remake as valid but slightly worse with public F1 `0.92093`
+- [X] T085 Record V2B-HE oversample rejection: local validation F1 `0.974077`, public F1 `0.90293`, `used_for_oversampling_count=806`, `train_validation_disjoint=true`, speed about `25.16` images/sec
+- [X] T086 Add hard-example source safety tests preventing explicit V2 sources from silently resolving nested `v1-artifacts`
+- [X] T087 Patch hard-example source resolution to generate from explicit V2 predictions and threshold before existing memory, and report `hard_example_source_type`
+- [X] T088 Document V2C EfficientNet-B2 384x384 as the next planned experiment with focal loss, weighted sampler, `analysis_only`, and benchmark/public-F1 acceptance gate
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -228,7 +241,7 @@ Task: "Add V2 benchmark report field tests for speed multiplier and speed ceilin
 ### Incremental Delivery
 
 1. Add US1 for the V2 classifier MVP.
-2. Add US2 for offline V1 hard-example oversampling and reporting.
+2. Add US2 for offline validation-derived hard-example oversampling and reporting.
 3. Add US3 for V1-vs-V2 comparison, V2 submission, and V2 benchmark.
 4. Run SPEC-007 targeted tests, V1 regression tests, and full project regression.
 
