@@ -1,4 +1,8 @@
 detector:
-  model_name: "placeholder"
-  num_classes: 2
+  annotation_path: "tests/fixtures/synthetic_dataset/train_annotations.json"
+  train_images: "tests/fixtures/synthetic_dataset/train_images"
+  output_root: "outputs/detector"
+  model_name: "yolo11n"
   image_size: 640
+  seed: 42
+  val_fraction: 0.2
