@@ -1,21 +1,18 @@
-"""SPEC-008 detector dataset, visualization, training, and evaluation commands."""
+"""SPEC-008 detector command wrapper for conversion, manual training, and evaluation."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 import yaml
 
-from src.data.coco_parser import load_coco_annotations
-from src.data.yolo_converter import (
-    audit_detector_annotations,
-    build_category_mapping,
-    convert_coco_to_yolo_dataset,
-    create_detector_visualizations,
-)
+from src.data.yolo_converter import run_audit as run_yolo_audit
+from src.data.yolo_converter import run_convert as run_yolo_convert
+from src.data.yolo_converter import run_visualize as run_yolo_visualize
+from src.data.yolo_converter import _jsonable
 
 
 DEFAULT_DETECTOR_CONFIG = Path("configs/detector.yaml")
@@ -30,50 +27,42 @@ def load_detector_config(path: str | Path) -> dict[str, Any]:
     if not config_path.exists():
         raise DetectorConfigError(f"Detector config not found: {config_path}")
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    detector = raw.get("detector", raw)
+    config = raw.get("detector", raw)
     required = ("annotation_path", "train_images", "output_root")
-    missing = [key for key in required if not detector.get(key)]
+    missing = [key for key in required if not config.get(key)]
     if missing:
         raise DetectorConfigError(f"Detector config missing required keys: {', '.join(missing)}")
-    train_images = Path(detector["train_images"])
+    train_images = Path(config["train_images"])
     if any(part.lower() == "test_images" for part in train_images.parts):
         raise DetectorConfigError("Detector training source must not use test_images")
-    return detector
+    return config
 
 
 def run_audit(config: dict[str, Any]) -> int:
-    output_root = Path(config["output_root"])
-    reports_dir = output_root / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    coco = load_coco_annotations(config["annotation_path"])
-    mapping = build_category_mapping(coco)
-    audit = audit_detector_annotations(coco, image_dir=config["train_images"])
-    _write_json(reports_dir / "category_mapping.json", mapping)
-    _write_json(reports_dir / "annotation_audit.json", audit)
-    return 0
+    return run_yolo_audit(
+        annotation_path=config["annotation_path"],
+        image_dir=config["train_images"],
+        output_root=config["output_root"],
+    )
 
 
 def run_convert(config: dict[str, Any]) -> int:
-    convert_coco_to_yolo_dataset(
+    return run_yolo_convert(
         annotation_path=config["annotation_path"],
         image_dir=config["train_images"],
         output_root=config["output_root"],
         seed=int(config.get("seed", 42)),
         val_fraction=float(config.get("val_fraction", 0.2)),
     )
-    return 0
 
 
 def run_visualize(config: dict[str, Any], *, max_samples: int) -> int:
-    output_root = Path(config["output_root"])
-    report = create_detector_visualizations(
+    return run_yolo_visualize(
         annotation_path=config["annotation_path"],
         image_dir=config["train_images"],
-        output_dir=output_root / "figures",
+        output_root=config["output_root"],
         max_samples=max_samples,
     )
-    _write_json(output_root / "reports" / "visualization_report.json", report)
-    return 0
 
 
 def run_train(config: dict[str, Any], *, model: str, dry_run: bool) -> int:
@@ -95,8 +84,11 @@ def run_train(config: dict[str, Any], *, model: str, dry_run: bool) -> int:
             from ultralytics import YOLO
         except ImportError as exc:
             raise DetectorConfigError("ultralytics is required for detector training") from exc
-        yolo = YOLO(f"{model}.pt")
-        yolo.train(data=str(dataset_yaml), imgsz=int(config.get("image_size", 640)), project=str(output_root / "models"))
+        YOLO(f"{model}.pt").train(
+            data=str(dataset_yaml),
+            imgsz=int(config.get("image_size", 640)),
+            project=str(output_root / "models"),
+        )
     _write_json(output_root / "reports" / "detector_training.json", report)
     return 0
 
@@ -123,23 +115,24 @@ def run_evaluate(config: dict[str, Any], *, model_path: str | Path, dry_run: boo
         except ImportError as exc:
             raise DetectorConfigError("ultralytics is required for detector evaluation") from exc
         metrics = YOLO(str(model_path)).val(data=str(dataset_yaml))
+        box_metrics = getattr(metrics, "box", None)
         report.update(
             {
-                "map": getattr(getattr(metrics, "box", None), "map", "unavailable"),
-                "precision": getattr(getattr(metrics, "box", None), "mp", "unavailable"),
-                "recall": getattr(getattr(metrics, "box", None), "mr", "unavailable"),
+                "map": getattr(box_metrics, "map", "unavailable"),
+                "precision": getattr(box_metrics, "mp", "unavailable"),
+                "recall": getattr(box_metrics, "mr", "unavailable"),
             }
         )
     _write_json(output_root / "reports" / "detector_evaluation.json", report)
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="SPEC-008 detector preparation and training commands.")
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="SPEC-008 detector preparation, manual training, and evaluation.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for name in ("audit", "convert", "visualize", "train", "evaluate"):
-        sub = subparsers.add_parser(name)
+        sub = subparsers.add_parser(name, help=f"Run detector {name}.")
         sub.add_argument("--config", type=Path, default=DEFAULT_DETECTOR_CONFIG)
         if name == "visualize":
             sub.add_argument("--max-samples", type=int, default=8)
@@ -166,8 +159,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    from src.data.yolo_converter import _jsonable
-
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_jsonable(payload), indent=2), encoding="utf-8")
 

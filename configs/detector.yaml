@@ -1,8 +1,9 @@
 detector:
-  annotation_path: "tests/fixtures/synthetic_dataset/train_annotations.json"
-  train_images: "tests/fixtures/synthetic_dataset/train_images"
+  annotation_path: "train_annotations.json"
+  train_images: "train_images"
   output_root: "outputs/detector"
   model_name: "yolo11n"
+  num_classes: 2
   image_size: 640
   seed: 42
   val_fraction: 0.2
