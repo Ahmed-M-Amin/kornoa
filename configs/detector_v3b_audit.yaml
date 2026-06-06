@@ -1,0 +1,11 @@
+detector_audit:
+  model_path: artifacts/krones_v3_yolov8n_50epoch_artifacts/best.pt
+  dataset_root: 1st-krones-vision-ai-challenge
+  category_mapping: artifacts/krones_v3_yolov8n_50epoch_artifacts/reports/category_mapping.json
+  val_predictions: artifacts/krones_v3_yolov8n_50epoch_artifacts/val_detector_binary_predictions.csv
+  test_predictions: artifacts/krones_v3_yolov8n_50epoch_artifacts/test_detector_predictions.csv
+  threshold_report: artifacts/krones_v3_yolov8n_50epoch_artifacts/detector_binary_threshold.json
+  output_dir: outputs/detector/v3b_audit
+  run_yolo_detailed: false
+  yolo_confidence: 0.001
+  yolo_batch_size: 8
