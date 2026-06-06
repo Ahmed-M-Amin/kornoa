@@ -15,6 +15,7 @@
 - Q: Should detector evidence be allowed to override uncertain classifier decisions in both directions, or only reject bottles? -> A: Rejection-only; detector evidence can change uncertain images to `1 = Not Reusable`, but cannot clear them to `0 = Reusable`.
 - Q: What detector usage ceiling should guide hybrid parameter selection? -> A: Prefer configurations with detector usage at or below 30% of validation overlap.
 - Q: Should conditional defect area thresholds be global or category-specific? -> A: Use per-category area thresholds with a documented default fallback for unmapped conditional categories.
+- V4.1 repair: test-time hybrid inference MUST use exported V2B classifier probabilities from `outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv` instead of target-only `submission_v2b.csv`; the repair MUST also generate `outputs/hybrid/v4/reports/v2b_vs_v4_diff.json`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -70,6 +71,7 @@ The practitioner can tune classifier uncertainty and detector decision threshold
 - Detector prediction files contain multiple detections per image and require image-level aggregation.
 - Detector prediction files lack confidence-like evidence for threshold tuning.
 - Classifier test submission has only `image_id,target` and no available classifier probability artifact for uncertainty gating.
+- V4.1 probability export exists but contains missing columns, non-binary predictions, duplicate image IDs, fewer than the expected test rows, or `prob_bad` values outside `[0, 1]`.
 - Validation prediction overlap is empty or too small to support trustworthy hybrid parameter search.
 - Detector evidence exists for confident classifier predictions but must not be used.
 - Detector evidence is missing for classifier-uncertain images.
@@ -87,7 +89,7 @@ The practitioner can tune classifier uncertainty and detector decision threshold
 - **FR-004**: System MUST run or apply detector evidence only for images whose classifier score is inside the uncertainty band.
 - **FR-005**: System MUST keep the classifier decision for every image whose classifier score is outside the uncertainty band, even when detector evidence disagrees.
 - **FR-006**: System MUST keep the classifier decision for uncertain images when detector evidence is missing, invalid, or below usable confidence.
-- **FR-007**: System MUST convert detector evidence into image-level defect evidence using the highest usable detection confidence per image and the relevant defect category or area data.
+- **FR-007**: System MUST convert detector evidence into image-level defect evidence by selecting the strongest rule-triggering rejection evidence per image when any exists, otherwise selecting the highest-confidence non-rejecting evidence with the relevant defect category or area data.
 - **FR-008**: System MUST mark an uncertain image as `1 = Not Reusable` when detector evidence identifies an always-faulty defect above the configured confidence threshold.
 - **FR-009**: System MUST mark an uncertain image as `1 = Not Reusable` when detector evidence identifies a conditional defect whose estimated area is above its configured per-category defect-area threshold.
 - **FR-010**: System MUST fall back to the classifier threshold decision when detector evidence does not trigger an always-faulty or conditional-area rejection rule.
@@ -102,6 +104,9 @@ The practitioner can tune classifier uncertainty and detector decision threshold
 - **FR-017**: System MUST save an overlap report covering classifier validation count, detector validation count, overlap count, non-overlap counts, and the statement that parameter search used validation overlap only.
 - **FR-018**: System MUST export final submission output with exactly two columns: `image_id` and `target`.
 - **FR-019**: System MUST fail with a clear error when test-time classifier confidence or probability is unavailable, because uncertainty gating cannot be inferred from a target-only submission.
+- **FR-019a**: System MUST export V2B test classifier probabilities to `outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv` with columns `image_id`, `prob_bad`, `classifier_prediction`, and `target` before V4.1 hybrid submission generation.
+- **FR-019b**: System MUST configure hybrid test inference to use `outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv` rather than target-only `submission_v2b.csv`.
+- **FR-019c**: System MUST save `outputs/hybrid/v4/reports/v2b_vs_v4_diff.json` comparing V2B classifier targets with V4 hybrid targets, including row count, changed count, changed ratio, target counts, and changed rows.
 - **FR-020**: System MUST NOT retrain the accepted classifier, retrain the detector, use test labels, tune on Kaggle public score, or modify accepted V2 or SPEC-008 detector artifacts.
 - **FR-021**: System MUST NOT implement Grad-CAM, Streamlit dashboard, feature memory bank, ensemble teacher models, distillation, final Kaggle notebook, or final report assets in SPEC-009.
 - **FR-022**: System SHOULD prefer configurations with detector usage at or below 30% of validation overlap when validation F1 remains competitive.
@@ -121,11 +126,13 @@ The practitioner can tune classifier uncertainty and detector decision threshold
 ### Key Entities *(include if feature involves data)*
 
 - **Classifier Prediction**: Image-level classifier score, threshold-derived binary target, optional ground-truth label, and uncertainty status.
+- **V2B Test Probability Export**: Sample-aligned test classifier probability file with image ID, bad probability, classifier prediction, and target alias used by V4.1 uncertainty gating.
 - **Detector Evidence**: Image-level aggregated detector confidence, defect category, optional area estimate, and usability status.
 - **Hybrid Rule Configuration**: Selected classifier threshold, uncertainty margin, detector confidence threshold, per-category conditional defect-area thresholds, default conditional-area fallback threshold, and tie-break policy.
 - **Validation Overlap Set**: Validation image IDs present in both classifier and detector predictions with labels, used for hybrid tuning and fair comparison.
 - **Hybrid Prediction**: Final image-level decision including classifier target, detector-used flag, hybrid target, decision source, defect reason, and timing fields when available.
 - **Hybrid Report**: Saved metrics, detector usage statistics, overlap diagnostics, selected configuration, and leakage-control declarations.
+- **V2B vs V4 Diff Report**: Saved comparison between V2B classifier targets and V4 hybrid targets, including changed-row counts and changed-row details.
 - **Submission File**: Competition-ready image ID and binary target output with no diagnostic columns.
 
 ## Success Criteria *(mandatory)*
@@ -143,6 +150,9 @@ The practitioner can tune classifier uncertainty and detector decision threshold
 - **SC-009**: Existing classifier-only and detector-preparation regression behavior remains unchanged.
 - **SC-010**: For comparable validation F1 candidates within 0.002 absolute F1, the selected hybrid configuration uses less detector review or a narrower uncertainty band.
 - **SC-011**: Selected hybrid configuration uses detector review for no more than 30% of validation-overlap images unless every higher-F1 candidate above that limit is explicitly reported as a tradeoff.
+- **SC-012**: V4.1 classifier probability export contains 4418 rows, required columns `image_id`, `prob_bad`, `classifier_prediction`, `target`, and only `prob_bad` values in `[0, 1]`.
+- **SC-013**: Hybrid configuration records `outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv` as the classifier test prediction input.
+- **SC-014**: V4.1 run writes `v2b_vs_v4_diff.json` with row count equal to the final submission row count and without using test labels.
 
 ## Assumptions
 
