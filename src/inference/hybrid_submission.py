@@ -73,6 +73,7 @@ def run_search(config_path: str | Path) -> HybridRunReport:
         conditional_area_threshold_candidates=_area_threshold_candidates(hybrid_cfg),
         default_conditional_area_threshold_candidates=_default_area_candidates(hybrid_cfg),
         detector_usage_preference=float(hybrid_cfg.get("detector_usage_preference", 0.30)),
+        selection_mode=str(hybrid_cfg.get("selection_mode", "conservative_f1_cap")),
     )
     _write_search_artifacts(
         output_dir,
@@ -127,6 +128,9 @@ def run_submit(config_path: str | Path, *, allow_untuned_submit: bool = False) -
 
 
 def run_pipeline(config_path: str | Path) -> HybridRunReport:
+    config = load_hybrid_config(config_path)
+    if str(config.get("hybrid", {}).get("selection_mode", "conservative_f1_cap")) == "diagnostic_only":
+        return run_search(config_path)
     run_search(config_path)
     return run_submit(config_path)
 
@@ -200,7 +204,14 @@ def _write_search_artifacts(
     overlap = metrics.get("overlap_report", {})
     _validate_report_schema(overlap, ["classifier_val_count", "detector_val_count", "overlap_count", "used_for_parameter_search"])
     _write_json(reports_dir / "hybrid_config.json", report_config)
-    _write_json(reports_dir / "hybrid_metrics.json", _json_ready(metrics))
+    search_grid = metrics.get("search_grid", [])
+    candidate_summary = metrics.get("candidate_summary", {})
+    if search_grid:
+        pd.DataFrame(search_grid).to_csv(reports_dir / "hybrid_search_grid.csv", index=False)
+    if candidate_summary:
+        _write_json(reports_dir / "hybrid_candidate_summary.json", candidate_summary)
+    metrics_for_report = {key: value for key, value in metrics.items() if key not in {"search_grid", "candidate_summary"}}
+    _write_json(reports_dir / "hybrid_metrics.json", _json_ready(metrics_for_report))
     _write_json(reports_dir / "overlap_report.json", _json_ready(overlap))
     val_predictions.sort_values("image_id").to_csv(predictions_dir / "val_hybrid_predictions.csv", index=False)
 

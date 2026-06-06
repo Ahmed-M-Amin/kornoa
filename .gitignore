@@ -116,3 +116,9 @@ outputs/
 *.pth
 *.pt
 *.zip
+
+.cursor/
+
+.specify/integrations/cursor-agent.manifest.json
+
+krones_v3_yolov8n_50epoch_clean.ipynb

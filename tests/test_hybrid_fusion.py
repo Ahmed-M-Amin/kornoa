@@ -456,3 +456,51 @@ def test_detector_baseline_uses_rejection_rules_not_confidence_only():
 
     assert metrics["detector_baseline"]["fp"] == 0
     assert metrics["detector_baseline"]["tp"] == 1
+
+
+def test_best_nonzero_change_selection_uses_safe_candidate_within_f1_cap():
+    from src.inference.fusion import search_hybrid_parameters
+
+    positive_count = 1000
+    classifier = pd.DataFrame(
+        {
+            "image_id": [f"pos_{idx}.jpg" for idx in range(positive_count)] + ["neg.jpg"],
+            "classifier_score": [0.9] * positive_count + [0.49],
+            "classifier_target": [1] * positive_count + [0],
+            "y_true": [1] * positive_count + [0],
+        }
+    )
+    detector = pd.DataFrame(
+        {
+            "image_id": [f"pos_{idx}.jpg" for idx in range(positive_count)] + ["neg.jpg"],
+            "detector_confidence": [0.0] * positive_count + [0.9],
+            "defect_category": ["none"] * positive_count + ["crack"],
+            "defect_area": [0.0] * positive_count + [0.1],
+        }
+    )
+
+    conservative_config, conservative_metrics, _ = search_hybrid_parameters(
+        classifier,
+        detector,
+        base_classifier_threshold=0.5,
+        uncertainty_margin_candidates=[0.0, 0.02],
+        detector_conf_threshold_candidates=[0.25],
+        always_faulty_categories={"crack"},
+        detector_usage_preference=0.30,
+    )
+    nonzero_config, nonzero_metrics, _ = search_hybrid_parameters(
+        classifier,
+        detector,
+        base_classifier_threshold=0.5,
+        uncertainty_margin_candidates=[0.0, 0.02],
+        detector_conf_threshold_candidates=[0.25],
+        always_faulty_categories={"crack"},
+        detector_usage_preference=0.30,
+        selection_mode="best_nonzero_change",
+    )
+
+    assert conservative_config.uncertainty_margin == pytest.approx(0.0)
+    assert conservative_metrics["detector_usage"]["changed_predictions"] == 0
+    assert nonzero_config.uncertainty_margin == pytest.approx(0.02)
+    assert nonzero_metrics["detector_usage"]["changed_predictions"] == 1
+    assert nonzero_metrics["hybrid"]["f1"] >= conservative_metrics["hybrid"]["f1"] - 0.002

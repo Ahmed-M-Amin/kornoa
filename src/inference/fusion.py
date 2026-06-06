@@ -246,6 +246,7 @@ def summarize_detector_usage(fused_df: pd.DataFrame) -> dict[str, int | float]:
     changed = int((fused_df["hybrid_target"].astype(int) != fused_df["classifier_target"].astype(int)).sum()) if total else 0
     result: dict[str, int | float] = {
         "count": count,
+        "total_count": total,
         "ratio": count / total if total else 0.0,
         "changed_predictions": changed,
         "fallback_area_threshold_uses": int(fused_df.get("used_default_area_threshold", pd.Series(dtype=bool)).map(bool).sum()),
@@ -289,7 +290,10 @@ def search_hybrid_parameters(
     conditional_area_threshold_candidates: Optional[dict[str, Iterable[float]]] = None,
     default_conditional_area_threshold_candidates: Optional[Iterable[float]] = None,
     detector_usage_preference: float = 0.30,
+    selection_mode: str = "conservative_f1_cap",
 ) -> tuple[HybridFusionConfig, dict[str, object], pd.DataFrame]:
+    if selection_mode not in {"conservative_f1_cap", "best_f1", "best_nonzero_change", "diagnostic_only"}:
+        raise HybridFusionError(f"Unsupported hybrid selection_mode: {selection_mode}")
     classifier = _ensure_classifier_frame(classifier_val_df, base_classifier_threshold)
     detector = _ensure_detector_frame(detector_val_df)
     if "y_true" not in classifier:
@@ -307,7 +311,8 @@ def search_hybrid_parameters(
     area_candidate_sets = _area_candidate_sets(conditional_area_threshold_candidates)
     default_area_candidates = list(default_conditional_area_threshold_candidates or [None])
 
-    best: tuple[HybridFusionConfig, dict[str, object], pd.DataFrame] | None = None
+    conservative_best: tuple[HybridFusionConfig, dict[str, object], pd.DataFrame] | None = None
+    candidates: list[tuple[HybridFusionConfig, dict[str, object], pd.DataFrame, dict[str, object]]] = []
     for threshold, margin, detector_threshold, area_thresholds, default_area in itertools.product(
         threshold_candidates,
         margin_candidates,
@@ -336,6 +341,7 @@ def search_hybrid_parameters(
         detector_metrics = compute_binary_metrics(fused["y_true"], detector_target)
         usage = summarize_detector_usage(fused)
         over_cap = float(usage["ratio"]) > detector_usage_preference
+        candidate_row = _candidate_grid_row(config, hybrid_metrics, usage)
         metrics = {
             "overlap_count": len(fused),
             "classifier_baseline": classifier_metrics,
@@ -346,18 +352,151 @@ def search_hybrid_parameters(
             "usage_tradeoff_reported": over_cap,
             "overlap_report": report,
         }
-        if best is None or _is_better_candidate(
+        candidates.append((config, metrics, fused, candidate_row))
+        if conservative_best is None or _is_better_candidate(
             candidate_metrics=hybrid_metrics,
             candidate_usage=usage,
             candidate_config=config,
-            best_metrics=best[1]["hybrid"],
-            best_usage=best[1]["detector_usage"],
-            best_config=best[0],
+            best_metrics=conservative_best[1]["hybrid"],
+            best_usage=conservative_best[1]["detector_usage"],
+            best_config=conservative_best[0],
             detector_usage_preference=detector_usage_preference,
         ):
-            best = (config, metrics, fused)
-    assert best is not None
-    return best[0], best[1], best[2]
+            conservative_best = (config, metrics, fused)
+    assert conservative_best is not None
+    selected, summary = _select_candidate_by_mode(candidates, conservative_best, selection_mode, detector_usage_preference)
+    selected_config, selected_metrics, selected_fused = selected
+    selected_metrics = dict(selected_metrics)
+    selected_metrics["search_grid"] = [row for _, _, _, row in candidates]
+    selected_metrics["candidate_summary"] = summary
+    return selected_config, selected_metrics, selected_fused
+
+
+def _candidate_grid_row(
+    config: HybridFusionConfig,
+    hybrid_metrics: dict[str, float | int],
+    usage: dict[str, float | int],
+) -> dict[str, object]:
+    changed = int(usage["changed_predictions"])
+    total = int(usage.get("total_count", 0))
+    return {
+        "classifier_threshold": config.classifier_threshold,
+        "uncertainty_margin": config.uncertainty_margin,
+        "detector_conf_threshold": config.detector_conf_threshold,
+        "detector_usage_count": int(usage["count"]),
+        "detector_usage_ratio": float(usage["ratio"]),
+        "changed_count_vs_classifier": changed,
+        "changed_ratio_vs_classifier": changed / total if total else 0.0,
+        "validation_f1": float(hybrid_metrics["f1"]),
+        "validation_accuracy": float(hybrid_metrics["accuracy"]),
+        "tp": int(hybrid_metrics["tp"]),
+        "fp": int(hybrid_metrics["fp"]),
+        "fn": int(hybrid_metrics["fn"]),
+        "tn": int(hybrid_metrics["tn"]),
+    }
+
+
+def _select_candidate_by_mode(
+    candidates: list[tuple[HybridFusionConfig, dict[str, object], pd.DataFrame, dict[str, object]]],
+    conservative_best: tuple[HybridFusionConfig, dict[str, object], pd.DataFrame],
+    selection_mode: str,
+    detector_usage_preference: float,
+) -> tuple[tuple[HybridFusionConfig, dict[str, object], pd.DataFrame], dict[str, object]]:
+    conservative_key = _summary_candidate(conservative_best[0], conservative_best[1])
+    if selection_mode in {"conservative_f1_cap", "diagnostic_only"}:
+        return conservative_best, {
+            "selection_mode": selection_mode,
+            "conservative_best_f1": float(conservative_best[1]["hybrid"]["f1"]),
+            "safe_nonzero_candidate_exists": _safe_nonzero_exists(candidates, conservative_best, detector_usage_preference),
+            "selected_reason": "conservative_f1_cap",
+            "fallback_to_conservative": False,
+            "conservative_candidate": conservative_key,
+            "selected_candidate": conservative_key,
+        }
+    if selection_mode == "best_f1":
+        best = max(
+            candidates,
+            key=lambda item: (
+                float(item[1]["hybrid"]["f1"]),
+                float(item[1]["hybrid"]["precision"]),
+                -float(item[1]["detector_usage"]["ratio"]),
+                -item[0].uncertainty_margin,
+            ),
+        )
+        selected = (best[0], best[1], best[2])
+        return selected, {
+            "selection_mode": selection_mode,
+            "conservative_best_f1": float(conservative_best[1]["hybrid"]["f1"]),
+            "safe_nonzero_candidate_exists": _safe_nonzero_exists(candidates, conservative_best, detector_usage_preference),
+            "selected_reason": "highest_validation_f1",
+            "fallback_to_conservative": False,
+            "conservative_candidate": conservative_key,
+            "selected_candidate": _summary_candidate(best[0], best[1]),
+        }
+
+    safe_nonzero = [
+        item
+        for item in candidates
+        if int(item[1]["detector_usage"]["changed_predictions"]) > 0
+        and float(item[1]["hybrid"]["f1"]) >= float(conservative_best[1]["hybrid"]["f1"]) - 0.002
+    ]
+    if not safe_nonzero:
+        return conservative_best, {
+            "selection_mode": selection_mode,
+            "conservative_best_f1": float(conservative_best[1]["hybrid"]["f1"]),
+            "safe_nonzero_candidate_exists": False,
+            "selected_reason": "no_safe_nonzero_candidate",
+            "fallback_to_conservative": True,
+            "conservative_candidate": conservative_key,
+            "selected_candidate": conservative_key,
+        }
+    best_nonzero = max(
+        safe_nonzero,
+        key=lambda item: (
+            float(item[1]["detector_usage"]["ratio"]) <= detector_usage_preference,
+            float(item[1]["hybrid"]["f1"]),
+            -float(item[1]["detector_usage"]["ratio"]),
+            -item[0].uncertainty_margin,
+        ),
+    )
+    selected = (best_nonzero[0], best_nonzero[1], best_nonzero[2])
+    return selected, {
+        "selection_mode": selection_mode,
+        "conservative_best_f1": float(conservative_best[1]["hybrid"]["f1"]),
+        "safe_nonzero_candidate_exists": True,
+        "selected_reason": "safe_nonzero_candidate_within_f1_cap",
+        "fallback_to_conservative": False,
+        "conservative_candidate": conservative_key,
+        "selected_candidate": _summary_candidate(best_nonzero[0], best_nonzero[1]),
+    }
+
+
+def _safe_nonzero_exists(
+    candidates: list[tuple[HybridFusionConfig, dict[str, object], pd.DataFrame, dict[str, object]]],
+    conservative_best: tuple[HybridFusionConfig, dict[str, object], pd.DataFrame],
+    detector_usage_preference: float,
+) -> bool:
+    return any(
+        int(item[1]["detector_usage"]["changed_predictions"]) > 0
+        and float(item[1]["detector_usage"]["ratio"]) <= detector_usage_preference
+        and float(item[1]["hybrid"]["f1"]) >= float(conservative_best[1]["hybrid"]["f1"]) - 0.002
+        for item in candidates
+    )
+
+
+def _summary_candidate(config: HybridFusionConfig, metrics: dict[str, object]) -> dict[str, object]:
+    usage = metrics["detector_usage"]
+    hybrid = metrics["hybrid"]
+    return {
+        "classifier_threshold": config.classifier_threshold,
+        "uncertainty_margin": config.uncertainty_margin,
+        "detector_conf_threshold": config.detector_conf_threshold,
+        "detector_usage_count": int(usage["count"]),
+        "detector_usage_ratio": float(usage["ratio"]),
+        "changed_count_vs_classifier": int(usage["changed_predictions"]),
+        "validation_f1": float(hybrid["f1"]),
+        "validation_accuracy": float(hybrid["accuracy"]),
+    }
 
 
 def _evaluate_detector_rejection(row: pd.Series, config: HybridFusionConfig) -> tuple[bool, str, bool]:

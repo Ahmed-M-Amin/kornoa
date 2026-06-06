@@ -12,6 +12,7 @@ detector:
 
 hybrid:
   output_dir: outputs/hybrid/v4
+  selection_mode: best_nonzero_change
   detector_usage_preference: 0.30
   selection_metric: f1
   always_faulty_categories:

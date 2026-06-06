@@ -116,6 +116,41 @@ def test_search_command_writes_required_artifacts(tmp_path):
     assert (output_dir / "predictions" / "val_hybrid_predictions.csv").exists()
 
 
+def test_search_command_writes_v42_candidate_grid_and_summary(tmp_path):
+    from src.inference.hybrid_submission import main
+
+    config_path = _write_config(tmp_path)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["hybrid"]["selection_mode"] = "best_nonzero_change"
+    config["hybrid"]["uncertainty_margin_candidates"] = [0.0, 0.05]
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    assert main(["search", "--config", str(config_path)]) == 0
+
+    output_dir = tmp_path / "outputs" / "hybrid" / "v4"
+    grid = pd.read_csv(output_dir / "reports" / "hybrid_search_grid.csv")
+    summary = json.loads((output_dir / "reports" / "hybrid_candidate_summary.json").read_text(encoding="utf-8"))
+
+    assert {
+        "classifier_threshold",
+        "uncertainty_margin",
+        "detector_conf_threshold",
+        "detector_usage_count",
+        "detector_usage_ratio",
+        "changed_count_vs_classifier",
+        "changed_ratio_vs_classifier",
+        "validation_f1",
+        "validation_accuracy",
+        "tp",
+        "fp",
+        "fn",
+        "tn",
+    } <= set(grid.columns)
+    assert summary["selection_mode"] == "best_nonzero_change"
+    assert "safe_nonzero_candidate_exists" in summary
+    assert "selected_candidate" in summary
+
+
 def test_run_command_writes_reports_and_strict_submission(tmp_path):
     from src.inference.hybrid_submission import main
 
@@ -132,6 +167,24 @@ def test_run_command_writes_reports_and_strict_submission(tmp_path):
     assert diff["row_count"] == len(rows)
     assert diff["uses_test_labels"] is False
     assert {"row_count", "changed_count", "changed_rows", "v2b_target_counts", "v4_target_counts"} <= set(diff)
+
+
+def test_diagnostic_only_run_writes_reports_without_overwriting_submission(tmp_path):
+    from src.inference.hybrid_submission import main
+
+    config_path = _write_config(tmp_path)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["hybrid"]["selection_mode"] = "diagnostic_only"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    submission = tmp_path / "outputs" / "hybrid" / "v4" / "submissions" / "submission_v4_hybrid.csv"
+    submission.parent.mkdir(parents=True, exist_ok=True)
+    submission.write_text("image_id,target\nexisting.jpg,0\n", encoding="utf-8")
+
+    assert main(["run", "--config", str(config_path)]) == 0
+
+    assert submission.read_text(encoding="utf-8") == "image_id,target\nexisting.jpg,0\n"
+    assert (tmp_path / "outputs" / "hybrid" / "v4" / "reports" / "hybrid_search_grid.csv").exists()
+    assert (tmp_path / "outputs" / "hybrid" / "v4" / "reports" / "hybrid_candidate_summary.json").exists()
 
 
 def test_final_submission_schema_is_strict(tmp_path):
