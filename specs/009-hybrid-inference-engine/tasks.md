@@ -228,3 +228,14 @@ Task: "T038 [P] [US3] Add test that search command writes config, metrics, overl
 - No task should read test labels, sample-solution labels, or public leaderboard feedback.
 - Generated artifacts belong under ignored `outputs/hybrid/v4/` paths.
 
+## V4.2 Result Notes
+
+- V4.2 hybrid public score: `0.92181`.
+- V2B classifier public score: `0.92121`.
+- Public-score improvement: `+0.00060`.
+- V4.2 changed 32 rows compared with V2B.
+- All changed rows were `0 -> 1` and used the detector decision source.
+- V4.2 is now the current best public submission.
+- V3 detector-only remains weak at `0.74169`.
+- Conclusion: hybrid detector fallback helps slightly, but the final `0.98` target requires V5 strong classifier work.
+

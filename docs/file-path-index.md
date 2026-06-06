@@ -1,6 +1,6 @@
 # Project File Path Index
 
-Generated: 2026-06-06 15:07:27 UTC
+Generated: 2026-06-06 15:43:59 UTC
 
 Refresh command:
 
@@ -24,7 +24,9 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 
 ## Documentation
 
+- `docs/file-path-index.md`
 - `docs/implementation.md`
+- `docs/v4_hybrid_closeout.md`
 
 ## Maintenance Scripts
 
