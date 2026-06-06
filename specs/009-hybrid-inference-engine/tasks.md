@@ -108,6 +108,9 @@
 - [X] T040 [P] [US3] Add test that final submission schema is exactly `image_id,target` in `tests/test_hybrid_submission.py`
 - [X] T041 [P] [US3] Add test that missing classifier test confidence fails before submission creation in `tests/test_hybrid_submission.py`
 - [X] T042 [P] [US3] Add test that CLI rejects sample-solution or test-label paths in `tests/test_hybrid_submission.py`
+- [X] T062 [P] [US3] Add test that V2B test probability export writes 4418-compatible rows with `image_id`, `prob_bad`, `classifier_prediction`, and `target` columns in `tests/test_inference_v2.py`
+- [X] T063 [P] [US3] Add test that hybrid config and reports use `outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv` instead of target-only `submission_v2b.csv` in `tests/test_hybrid_submission.py`
+- [X] T064 [P] [US3] Add test that `v2b_vs_v4_diff.json` is generated and compares V2B classifier targets with V4 hybrid targets in `tests/test_hybrid_submission.py`
 
 ### Implementation for User Story 3
 
@@ -122,6 +125,11 @@
 - [X] T051 [US3] Add leakage guard checks for test labels, sample solution paths, and public-score-derived inputs in `src/inference/hybrid_submission.py`
 - [X] T052 [US3] Implement optional hybrid benchmark/timing report generation under `outputs/hybrid/v4/benchmarks/` when timing inputs are available in `src/inference/hybrid_submission.py`
 - [X] T053 [US3] Run `pytest tests/test_hybrid_fusion.py tests/test_hybrid_submission.py` and fix US3 regressions
+- [X] T065 [US3] Implement V2B test probability export command writing `outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv` in `src/inference/submission.py`
+- [X] T066 [US3] Extend classifier prediction normalization to accept `prob_bad` and `classifier_prediction` columns in `src/inference/fusion.py`
+- [X] T067 [US3] Update `configs/hybrid_inference.yaml` to use `outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv` for classifier test predictions
+- [X] T068 [US3] Implement `v2b_vs_v4_diff.json` report generation under `outputs/hybrid/v4/reports/` in `src/inference/hybrid_submission.py`
+- [X] T069 [US3] Run V2B probability export and V4.1 hybrid inference without retraining V2B, retraining V3, using test labels, or submitting automatically
 
 **Checkpoint**: All user stories are independently functional.
 

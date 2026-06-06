@@ -1,6 +1,6 @@
 # Project File Path Index
 
-Generated: 2026-06-06 15:43:59 UTC
+Generated: 2026-06-06 14:15:57 UTC
 
 Refresh command:
 
@@ -16,7 +16,6 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `configs/classifier_v2.yaml`
 - `configs/dashboard.yaml`
 - `configs/detector.yaml`
-- `configs/detector_v3b_audit.yaml`
 - `configs/hybrid_inference.yaml`
 - `configs/inference.yaml`
 - `configs/paths.yaml`
@@ -26,7 +25,6 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 
 - `docs/file-path-index.md`
 - `docs/implementation.md`
-- `docs/v4_hybrid_closeout.md`
 
 ## Maintenance Scripts
 
@@ -66,7 +64,6 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `src/explainability/__init__.py`
 - `src/inference/__init__.py`
 - `src/inference/benchmark.py`
-- `src/inference/detector_audit.py`
 - `src/inference/fusion.py`
 - `src/inference/hybrid_submission.py`
 - `src/inference/predict.py`
@@ -251,9 +248,9 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `tests/test_coco_parser.py`
 - `tests/test_dataset.py`
 - `tests/test_dataset_audit.py`
-- `tests/test_detector_audit.py`
 - `tests/test_detector_cli_entrypoints.py`
 - `tests/test_detector_yolo_conversion.py`
+- `tests/test_file_path_index.py`
 - `tests/test_hard_example_mining.py`
 - `tests/test_hybrid_fusion.py`
 - `tests/test_hybrid_submission.py`
