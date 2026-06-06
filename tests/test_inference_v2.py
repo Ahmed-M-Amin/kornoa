@@ -203,6 +203,31 @@ def test_v2_submission_output_contract(tmp_path):
     assert {row["target"] for row in rows} <= {"0", "1"}
 
 
+def test_v2_classifier_test_prediction_export_contract(tmp_path):
+    from src.inference.submission import export_classifier_test_predictions
+
+    artifact_root = _make_v2_artifact_root(tmp_path)
+    dataset = _make_dataset(tmp_path)
+    output_path = tmp_path / "outputs" / "hybrid" / "v4" / "input" / "test_classifier_predictions_v2b.csv"
+
+    report = export_classifier_test_predictions(
+        dataset_root=dataset,
+        artifact_root=artifact_root,
+        output_path=output_path,
+        model_name="tiny_cnn",
+        synthetic_smoke=True,
+        device="cpu",
+        batch_size=2,
+    )
+
+    rows = list(csv.DictReader(output_path.open("r", newline="", encoding="utf-8")))
+    assert report.row_count == 2
+    assert list(rows[0]) == ["image_id", "prob_bad", "classifier_prediction", "target"]
+    assert all(0.0 <= float(row["prob_bad"]) <= 1.0 for row in rows)
+    assert {row["classifier_prediction"] for row in rows} <= {"0", "1"}
+    assert [row["target"] for row in rows] == [row["classifier_prediction"] for row in rows]
+
+
 def test_v2_submission_works_with_efficientnet_b1(tmp_path, monkeypatch):
     _install_fake_torchvision(monkeypatch)
     from src.inference.submission import generate_submission

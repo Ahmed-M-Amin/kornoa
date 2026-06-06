@@ -1,0 +1,38 @@
+classifier:
+  model_id: v2b_effnet_b1
+  val_predictions: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv
+  test_predictions: outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv
+  threshold_report: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/reports/best_threshold.json
+
+detector:
+  model_id: v3_detector
+  val_predictions: artifacts/krones_v3_yolov8n_50epoch_artifacts/val_detector_binary_predictions.csv
+  test_predictions: artifacts/krones_v3_yolov8n_50epoch_artifacts/test_detector_predictions.csv
+  category_mapping: artifacts/krones_v3_yolov8n_50epoch_artifacts/reports/category_mapping.json
+
+hybrid:
+  output_dir: outputs/hybrid/v4
+  detector_usage_preference: 0.30
+  selection_metric: f1
+  always_faulty_categories:
+    - binary_detector_positive
+  conditional_categories: []
+  default_conditional_area_threshold: 0.05
+  conditional_area_thresholds: {}
+  uncertainty_margin_candidates:
+    - 0.0
+    - 0.01
+    - 0.02
+    - 0.05
+    - 0.10
+    - 0.20
+    - 0.30
+  detector_conf_threshold_candidates:
+    - 0.05
+    - 0.10
+    - 0.25
+    - 0.50
+    - 0.75
+
+leakage_check:
+  forbidden_paths: []

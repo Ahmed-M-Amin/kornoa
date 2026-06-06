@@ -85,6 +85,61 @@ def generate_submission(
     return SubmissionReport(output_path=output, row_count=len(image_ids), artifact_root=resolved_artifacts.artifact_root)
 
 
+def export_classifier_test_predictions(
+    *,
+    dataset_root: str | Path | None = None,
+    sample_submission_path: str | Path | None = None,
+    test_images_dir: str | Path | None = None,
+    artifact_root: str | Path = DEFAULT_V2_ARTIFACT_ROOT,
+    model_path: str | Path | None = None,
+    threshold_path: str | Path | None = None,
+    output_path: str | Path = Path("outputs/hybrid/v4/input/test_classifier_predictions_v2b.csv"),
+    model_name: str = "efficientnet_b1",
+    synthetic_smoke: bool = False,
+    device: str = "auto",
+    batch_size: int = 1,
+    image_size: int = 384,
+) -> SubmissionReport:
+    """Export sample-aligned classifier probabilities for hybrid inference."""
+
+    resolved_artifacts = resolve_v2_artifact_paths(artifact_root)
+    sample_path, image_dir = _resolve_dataset_inputs(dataset_root, sample_submission_path, test_images_dir)
+    sample_rows = _read_sample_submission(sample_path)
+    image_ids = [row["image_id"] for row in sample_rows]
+    try:
+        image_paths = resolve_image_paths(image_ids, image_dir)
+        predictions = predict_images(
+            image_paths,
+            artifact_root=resolved_artifacts.artifact_root,
+            model_path=model_path,
+            threshold_path=threshold_path,
+            model_name=model_name,
+            synthetic_smoke=synthetic_smoke,
+            device=device,
+            batch_size=batch_size,
+            image_size=image_size,
+        )
+    except V1InferenceError as exc:
+        raise SubmissionError(str(exc)) from exc
+    by_id = {prediction.image_id: prediction for prediction in predictions}
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["image_id", "prob_bad", "classifier_prediction", "target"])
+        writer.writeheader()
+        for image_id in image_ids:
+            prediction = by_id[image_id]
+            writer.writerow(
+                {
+                    "image_id": image_id,
+                    "prob_bad": prediction.probability,
+                    "classifier_prediction": prediction.target,
+                    "target": prediction.target,
+                }
+            )
+    return SubmissionReport(output_path=output, row_count=len(image_ids), artifact_root=resolved_artifacts.artifact_root)
+
+
 def _looks_like_v2_submission(artifact_root: str | Path, output_path: str | Path) -> bool:
     root = Path(artifact_root)
     out = Path(output_path)
@@ -124,7 +179,8 @@ def _read_sample_submission(path: Path) -> list[dict[str, str]]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Generate SPEC-006 V1 submission.")
+    parser = argparse.ArgumentParser(description="Generate classifier submissions and prediction exports.")
+    parser.add_argument("--export-test-predictions", action="store_true")
     parser.add_argument("--dataset-root", type=Path, default=None)
     parser.add_argument("--sample-submission-path", type=Path, default=None)
     parser.add_argument("--test-images-dir", type=Path, default=None)
@@ -138,6 +194,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--image-size", type=int, default=384)
     args = parser.parse_args(argv)
+
+    if args.export_test_predictions:
+        report = export_classifier_test_predictions(
+            dataset_root=args.dataset_root,
+            sample_submission_path=args.sample_submission_path,
+            test_images_dir=args.test_images_dir,
+            artifact_root=args.artifact_root,
+            model_path=args.model_path,
+            threshold_path=args.threshold_path,
+            output_path=args.output_path,
+            model_name=args.model_name,
+            synthetic_smoke=args.synthetic_smoke,
+            device=args.device,
+            batch_size=args.batch_size,
+            image_size=args.image_size,
+        )
+        print(f"Generated {report.row_count} classifier prediction rows at {report.output_path}")
+        return 0
 
     report = generate_submission(
         dataset_root=args.dataset_root,
