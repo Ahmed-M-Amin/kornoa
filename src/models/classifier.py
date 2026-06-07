@@ -13,6 +13,17 @@ SUPPORTED_CLASSIFIER_BACKBONES = {
     "convnext_tiny",
     "tiny_cnn",
 }
+V5_PRIMARY_BACKBONE = "convnext_tiny"
+V5_FALLBACK_BACKBONE = "efficientnet_b2"
+
+
+def validate_v5_classifier_scope(model_name: str, fallback_model_name: str) -> None:
+    """Validate the bounded SPEC-010 classifier search space."""
+
+    if model_name != V5_PRIMARY_BACKBONE:
+        raise ValueError("SPEC-010 V5 primary classifier must be convnext_tiny")
+    if fallback_model_name != V5_FALLBACK_BACKBONE:
+        raise ValueError("SPEC-010 V5 fallback classifier must be efficientnet_b2")
 
 
 class BinaryClassifier(nn.Module):

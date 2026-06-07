@@ -23,6 +23,8 @@ DEFAULT_THRESHOLD_RELATIVE = Path("reports/best_threshold.json")
 DEFAULT_VALIDATION_PREDICTIONS_RELATIVE = Path("predictions/val_classifier_predictions.csv")
 DEFAULT_V2_ARTIFACT_ROOT = Path("outputs/kaggle_v2")
 DEFAULT_V2_MODEL_RELATIVE = Path("models/classifier_best.pth")
+DEFAULT_V5_ARTIFACT_ROOT = Path("outputs/kaggle_v5/v5_strong_classifier")
+DEFAULT_V5_MODEL_RELATIVE = Path("models/classifier_best.pth")
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
 
@@ -98,6 +100,26 @@ def resolve_v2_artifact_paths(artifact_root: str | Path | None = None) -> V1Arti
     return paths
 
 
+def resolve_v5_artifact_paths(artifact_root: str | Path | None = None) -> V1ArtifactPaths:
+    """Resolve selected V5 classifier artifacts."""
+
+    root = Path(artifact_root) if artifact_root is not None else DEFAULT_V5_ARTIFACT_ROOT
+    root = root.expanduser()
+    concrete_root = root / "kaggle_v5" / "v5_strong_classifier" if (root / "kaggle_v5" / "v5_strong_classifier").is_dir() else root
+    paths = V1ArtifactPaths(
+        artifact_root=concrete_root,
+        model_path=concrete_root / DEFAULT_V5_MODEL_RELATIVE,
+        metrics_path=concrete_root / DEFAULT_METRICS_RELATIVE,
+        threshold_path=concrete_root / DEFAULT_THRESHOLD_RELATIVE,
+        validation_predictions_path=concrete_root / DEFAULT_VALIDATION_PREDICTIONS_RELATIVE,
+    )
+    missing = [path for path in (paths.model_path, paths.metrics_path, paths.threshold_path) if not path.exists()]
+    if missing:
+        names = ", ".join(str(path) for path in missing)
+        raise V1InferenceError(f"Missing required V5 artifact files: {names}")
+    return paths
+
+
 def load_threshold(threshold_path: str | Path) -> float:
     """Load and validate the saved V1 threshold."""
 
@@ -155,7 +177,12 @@ def predict_images(
         raise V1InferenceError("batch_size must be at least 1")
     artifacts: Optional[V1ArtifactPaths] = None
     if artifact_root is not None or model_path is None or threshold_path is None:
-        artifacts = resolve_v2_artifact_paths(artifact_root) if _looks_like_v2_root(artifact_root) else resolve_v1_artifact_paths(artifact_root)
+        if _looks_like_v5_root(artifact_root):
+            artifacts = resolve_v5_artifact_paths(artifact_root)
+        elif _looks_like_v2_root(artifact_root):
+            artifacts = resolve_v2_artifact_paths(artifact_root)
+        else:
+            artifacts = resolve_v1_artifact_paths(artifact_root)
     active_model_path = Path(model_path) if model_path is not None else artifacts.model_path
     active_threshold_path = Path(threshold_path) if threshold_path is not None else artifacts.threshold_path
     threshold = load_threshold(active_threshold_path)
@@ -212,6 +239,14 @@ def _looks_like_v2_root(artifact_root: str | Path | None) -> bool:
         return False
     root = Path(artifact_root)
     return "kaggle_v2" in root.parts or (root / "models" / "classifier_best.pth").exists()
+
+
+def _looks_like_v5_root(artifact_root: str | Path | None) -> bool:
+    if artifact_root is None:
+        return False
+    root = Path(artifact_root)
+    normalized = str(root).replace("\\", "/").lower()
+    return "kaggle_v5" in normalized or "v5_strong_classifier" in normalized
 
 
 def _load_checkpoint(model: torch.nn.Module, model_path: Path, device: torch.device) -> None:

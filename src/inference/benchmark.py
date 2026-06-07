@@ -9,11 +9,21 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
-from src.inference.predict import DEFAULT_ARTIFACT_ROOT, DEFAULT_V2_ARTIFACT_ROOT, discover_images, predict_images, resolve_v1_artifact_paths, resolve_v2_artifact_paths
+from src.inference.predict import (
+    DEFAULT_ARTIFACT_ROOT,
+    DEFAULT_V2_ARTIFACT_ROOT,
+    DEFAULT_V5_ARTIFACT_ROOT,
+    discover_images,
+    predict_images,
+    resolve_v1_artifact_paths,
+    resolve_v2_artifact_paths,
+    resolve_v5_artifact_paths,
+)
 
 
 DEFAULT_BENCHMARK_OUTPUT = Path("outputs/benchmarks/v1_inference_benchmark.json")
 DEFAULT_V2_BENCHMARK_OUTPUT = Path("outputs/kaggle_v2/benchmarks/v2_inference_benchmark.json")
+DEFAULT_V5_BENCHMARK_OUTPUT = Path("outputs/kaggle_v5/v5_strong_classifier/benchmarks/v5_inference_benchmark.json")
 
 
 @dataclass(frozen=True)
@@ -29,6 +39,9 @@ class BenchmarkReport:
     artifact_root: str
     speed_multiplier_vs_v1: float | None = None
     within_v2_speed_ceiling: bool | None = None
+    speed_ratio_vs_v2b: float | None = None
+    within_v5_speed_ceiling: bool | None = None
+    benchmark_reference: str | None = None
 
 
 def run_benchmark(
@@ -48,7 +61,12 @@ def run_benchmark(
 ) -> BenchmarkReport:
     """Run V1 prediction and save benchmark metrics."""
 
-    artifacts = resolve_v2_artifact_paths(artifact_root) if _looks_like_v2_benchmark(artifact_root, output_path) else resolve_v1_artifact_paths(artifact_root)
+    if _looks_like_v5_benchmark(artifact_root, output_path):
+        artifacts = resolve_v5_artifact_paths(artifact_root)
+    elif _looks_like_v2_benchmark(artifact_root, output_path):
+        artifacts = resolve_v2_artifact_paths(artifact_root)
+    else:
+        artifacts = resolve_v1_artifact_paths(artifact_root)
     image_paths = discover_images(image_dir)
     started = time.perf_counter()
     predict_images(
@@ -79,6 +97,9 @@ def run_benchmark(
         artifact_root=str(artifacts.artifact_root),
         speed_multiplier_vs_v1=None if speed_multiplier is None else round(speed_multiplier, 6),
         within_v2_speed_ceiling=None if speed_multiplier is None else speed_multiplier <= speed_ceiling_multiplier,
+        speed_ratio_vs_v2b=None if speed_multiplier is None else round(speed_multiplier, 6),
+        within_v5_speed_ceiling=None if speed_multiplier is None else speed_multiplier <= speed_ceiling_multiplier,
+        benchmark_reference="v2b" if _looks_like_v5_benchmark(artifact_root, output_path) else None,
     )
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +111,13 @@ def _looks_like_v2_benchmark(artifact_root: str | Path, output_path: str | Path)
     root = Path(artifact_root)
     out = Path(output_path)
     return "kaggle_v2" in root.parts or "kaggle_v2" in out.parts or root == DEFAULT_V2_ARTIFACT_ROOT
+
+
+def _looks_like_v5_benchmark(artifact_root: str | Path, output_path: str | Path) -> bool:
+    root = Path(artifact_root)
+    out = Path(output_path)
+    normalized = f"{root}|{out}".replace("\\", "/").lower()
+    return "kaggle_v5" in normalized or "v5_strong_classifier" in normalized or root == DEFAULT_V5_ARTIFACT_ROOT
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

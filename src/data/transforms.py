@@ -25,8 +25,23 @@ def create_preprocessing_profile(
 
     if split not in SUPPORTED_SPLITS:
         raise ValueError(f"Unsupported preprocessing split: {split}")
-    if augmentation_recipe not in {"v1", "v2_safe"}:
+    if augmentation_recipe not in {"v1", "v2_safe", "v5_safe"}:
         raise ValueError(f"Unsupported augmentation recipe: {augmentation_recipe}")
+
+    if split == "train" and augmentation_recipe == "v5_safe":
+        return PreprocessingProfile(
+            split=split,
+            target_size=target_size,
+            augment=True,
+            seed=seed,
+            max_rotation_degrees=10.0,
+            max_shift_ratio=0.07,
+            brightness_delta=0.16,
+            contrast_delta=0.16,
+            gamma_delta=0.10,
+            blur_probability=0.18,
+            noise_std=4.0,
+        )
 
     if split == "train" and augmentation_recipe == "v2_safe":
         return PreprocessingProfile(

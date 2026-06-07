@@ -1,6 +1,6 @@
 # Project File Path Index
 
-Generated: 2026-06-06 14:15:57 UTC
+Generated: 2026-06-07 21:47:48 UTC
 
 Refresh command:
 
@@ -16,15 +16,19 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `configs/classifier_v2.yaml`
 - `configs/dashboard.yaml`
 - `configs/detector.yaml`
+- `configs/detector_v3b_audit.yaml`
 - `configs/hybrid_inference.yaml`
 - `configs/inference.yaml`
 - `configs/paths.yaml`
 - `configs/paths_local_real.yaml`
+- `configs/v5_strong_classifier.yaml`
 
 ## Documentation
 
 - `docs/file-path-index.md`
 - `docs/implementation.md`
+- `docs/v4_hybrid_closeout.md`
+- `docs/v5_strong_classifier_closeout.md`
 
 ## Maintenance Scripts
 
@@ -64,6 +68,7 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `src/explainability/__init__.py`
 - `src/inference/__init__.py`
 - `src/inference/benchmark.py`
+- `src/inference/detector_audit.py`
 - `src/inference/fusion.py`
 - `src/inference/hybrid_submission.py`
 - `src/inference/predict.py`
@@ -154,6 +159,14 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `specs/009-hybrid-inference-engine/research.md`
 - `specs/009-hybrid-inference-engine/spec.md`
 - `specs/009-hybrid-inference-engine/tasks.md`
+- `specs/010-v5-strong-classifier/checklists/requirements.md`
+- `specs/010-v5-strong-classifier/contracts/v5-strong-classifier-contract.md`
+- `specs/010-v5-strong-classifier/data-model.md`
+- `specs/010-v5-strong-classifier/plan.md`
+- `specs/010-v5-strong-classifier/quickstart.md`
+- `specs/010-v5-strong-classifier/research.md`
+- `specs/010-v5-strong-classifier/spec.md`
+- `specs/010-v5-strong-classifier/tasks.md`
 
 ## Spec Kit Tooling
 
@@ -245,9 +258,11 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `tests/test_benchmark.py`
 - `tests/test_classifier.py`
 - `tests/test_classifier_v2.py`
+- `tests/test_classifier_v5.py`
 - `tests/test_coco_parser.py`
 - `tests/test_dataset.py`
 - `tests/test_dataset_audit.py`
+- `tests/test_detector_audit.py`
 - `tests/test_detector_cli_entrypoints.py`
 - `tests/test_detector_yolo_conversion.py`
 - `tests/test_file_path_index.py`
@@ -256,11 +271,13 @@ Excluded by design: private datasets, `artifacts/`, `outputs/`, model weights, c
 - `tests/test_hybrid_submission.py`
 - `tests/test_inference.py`
 - `tests/test_inference_v2.py`
+- `tests/test_inference_v5.py`
 - `tests/test_preprocessing.py`
 - `tests/test_project_foundation.py`
 - `tests/test_roi.py`
 - `tests/test_submission.py`
 - `tests/test_training.py`
 - `tests/test_training_v2.py`
+- `tests/test_training_v5.py`
 - `tests/test_transforms_v2.py`
 - `tests/test_v2_comparison.py`

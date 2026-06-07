@@ -1,0 +1,34 @@
+classifier:
+  v5: true
+  experiment_name: "v5_strong_classifier"
+  model_name: "convnext_tiny"
+  fallback_model_name: "efficientnet_b2"
+  num_classes: 2
+  image_size: 512
+  validation_split: 0.2
+  split_source: "v2b_compatible"
+  seed: 42
+  epochs: 5
+  batch_size: 4
+  num_workers: 0
+  pin_memory: false
+  device: "auto"
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  max_train_samples:
+  max_val_samples:
+  log_every_n_batches: 25
+  imbalance_strategy: "focal_loss_weighted_sampler"
+  weighted_sampler: true
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  augmentation_recipe: "v5_safe"
+  hard_example_strategy: "analysis_only"
+  hard_example_source: "auto"
+  speed_ceiling_multiplier: 2.0
+  close_f1_tolerance: 0.002
+  public_score_baseline: 0.92181
+  v2b_public_score: 0.92121
+  v3_detector_public_score: 0.74169
+  v2b_average_time_per_image:
+  public_score_decision: "analysis_only_pending_manual_review"
