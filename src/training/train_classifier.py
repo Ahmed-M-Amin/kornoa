@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from src.data.dataset import DatasetValidationError, audit_dataset
 from src.data.preprocessing import preprocess_image
 from src.data.roi import RoiCropRequest
-from src.models.classifier import create_classifier
+from src.models.classifier import create_classifier, validate_v5_classifier_scope
 from src.training.losses import create_binary_focal_loss, create_weighted_bce_loss
 from src.training.metrics import BinaryMetrics, V1BaselineRecord, V2CandidateResult, compute_binary_metrics, generate_v1_vs_v2_comparison
 from src.training.threshold_search import ThresholdSearchResult, find_best_threshold
@@ -41,8 +41,17 @@ V2_METRICS_OUTPUT = V2_OUTPUT_ROOT / "reports/classifier_metrics.json"
 V2_THRESHOLD_OUTPUT = V2_OUTPUT_ROOT / "reports/best_threshold.json"
 V2_PREDICTIONS_OUTPUT = V2_OUTPUT_ROOT / "predictions/val_classifier_predictions.csv"
 V2_COMPARISON_OUTPUT = V2_OUTPUT_ROOT / "reports/v1_vs_v2_comparison.json"
+V5_OUTPUT_ROOT = Path("outputs/kaggle_v5/v5_strong_classifier")
+V5_MODEL_OUTPUT = V5_OUTPUT_ROOT / "models/classifier_best.pth"
+V5_METRICS_OUTPUT = V5_OUTPUT_ROOT / "reports/classifier_metrics.json"
+V5_THRESHOLD_OUTPUT = V5_OUTPUT_ROOT / "reports/best_threshold.json"
+V5_PREDICTIONS_OUTPUT = V5_OUTPUT_ROOT / "predictions/val_classifier_predictions.csv"
+V5_TEST_PREDICTIONS_OUTPUT = V5_OUTPUT_ROOT / "predictions/test_classifier_predictions.csv"
+V5_SUBMISSION_OUTPUT = V5_OUTPUT_ROOT / "submissions/submission_v5.csv"
+V5_BENCHMARK_OUTPUT = V5_OUTPUT_ROOT / "benchmarks/v5_inference_benchmark.json"
 V2_ALLOWED_HARD_EXAMPLE_STRATEGIES = {"none", "analysis_only", "oversample"}
 V2_ALLOWED_BACKBONES = {"efficientnet_b0", "efficientnet_b1", "efficientnet_b2", "convnext_tiny", "tiny_cnn"}
+V5_ALLOWED_HARD_EXAMPLE_STRATEGIES = {"analysis_only", "oversample"}
 V2_FORBIDDEN_FLAGS = {
     "detector",
     "segmentation",
@@ -133,6 +142,14 @@ class TrainingRunConfig:
     speed_ceiling_multiplier: float = 2.0
     close_f1_tolerance: float = 0.002
     v2: bool = False
+    v5: bool = False
+    fallback_model_name: str = "efficientnet_b2"
+    split_source: str = "v2b_compatible"
+    public_score_baseline: float = 0.92181
+    v3_detector_public_score: float = 0.74169
+    v2b_public_score: float = 0.92121
+    v2b_average_time_per_image: Optional[float] = None
+    public_score_decision: str = "analysis_only_pending_manual_review"
 
 
 @dataclass(frozen=True)
@@ -142,6 +159,9 @@ class ValidationPrediction:
     probability: float
     threshold: float
     predicted_label: int
+    prob_bad: float
+    classifier_prediction: int
+    target: int
 
 
 @dataclass(frozen=True)
@@ -162,6 +182,22 @@ class ClassifierMetricsReport:
     imbalance_strategy: str = "weighted_bce"
     hard_example_source_used: str = ""
     split_disjointness: dict[str, object] = field(default_factory=dict)
+    selected_model_name: str = ""
+    fallback_model_name: str = ""
+    split_source: str = ""
+    validation_prediction_distribution: dict[str, int] = field(default_factory=dict)
+    validation_target_distribution: dict[str, int] = field(default_factory=dict)
+    test_prediction_distribution: dict[str, int] = field(default_factory=dict)
+    submission_row_count: int = 0
+    v2b_benchmark_reference: dict[str, object] = field(default_factory=dict)
+    speed_ratio_vs_v2b: Optional[float] = None
+    within_v5_speed_ceiling: Optional[bool] = None
+    public_score_baseline: float = 0.92181
+    v2b_public_score: float = 0.92121
+    v3_detector_public_score: float = 0.74169
+    public_score_decision: str = "analysis_only_pending_manual_review"
+    analysis_only: bool = True
+    selection_source: str = "validation_only"
 
 
 @dataclass(frozen=True)
@@ -170,6 +206,9 @@ class BestThresholdRecord:
     f1_score: float
     tie_break: str
     candidate_count: int
+    split_source: str = ""
+    selection_source: str = "validation_only"
+    confusion_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -241,9 +280,34 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     with Path(config_path).open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
     cfg = raw.get("classifier", raw)
+    experiment_cfg = raw.get("experiment", {})
+    model_cfg = raw.get("model", {})
+    training_cfg = raw.get("training", {})
+    data_cfg = raw.get("data", {})
+    benchmark_cfg = raw.get("benchmark", {})
+    is_v5 = bool(cfg.get("v5", False) or raw.get("v5", False) or "v5_strong_classifier" in Path(config_path).name)
+    if is_v5:
+        cfg = {
+            **cfg,
+            "v5": True,
+            "experiment_name": experiment_cfg.get("name", cfg.get("experiment_name")),
+            "seed": experiment_cfg.get("seed", cfg.get("seed")),
+            "model_name": model_cfg.get("model_name", cfg.get("model_name")),
+            "fallback_model_name": model_cfg.get("fallback_model_name", cfg.get("fallback_model_name")),
+            "image_size": model_cfg.get("image_size", cfg.get("image_size")),
+            "imbalance_strategy": training_cfg.get("loss", cfg.get("imbalance_strategy")),
+            "weighted_sampler": training_cfg.get("sampler", cfg.get("weighted_sampler")),
+            "hard_example_strategy": training_cfg.get("hard_example_strategy", cfg.get("hard_example_strategy")),
+            "augmentation_recipe": training_cfg.get("augmentation_recipe", cfg.get("augmentation_recipe")),
+            "split_source": data_cfg.get("split_source", cfg.get("split_source")),
+            "speed_ceiling_multiplier": benchmark_cfg.get("speed_ceiling_multiplier", cfg.get("speed_ceiling_multiplier")),
+            "v2b_average_time_per_image": benchmark_cfg.get("v2b_average_time_per_image", cfg.get("v2b_average_time_per_image")),
+        }
     is_v2 = bool(cfg.get("v2", False) or raw.get("v2", False) or "classifier_v2" in Path(config_path).name)
     if is_v2:
         validate_v2_scope_guards({**raw, **cfg})
+    if is_v5:
+        validate_v5_scope_guards({**raw, **cfg})
     config = TrainingRunConfig(
         model_name=str(cfg.get("model_name", "efficientnet_b0")),
         image_size=int(cfg.get("image_size", 384)),
@@ -271,12 +335,27 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         speed_ceiling_multiplier=float(cfg.get("speed_ceiling_multiplier", 2.0)),
         close_f1_tolerance=float(cfg.get("close_f1_tolerance", 0.002)),
         v2=is_v2,
+        v5=is_v5,
+        fallback_model_name=str(cfg.get("fallback_model_name", "efficientnet_b2")),
+        split_source=str(cfg.get("split_source", "v2b_compatible")),
+        public_score_baseline=float(cfg.get("public_score_baseline", 0.92181)),
+        v3_detector_public_score=float(cfg.get("v3_detector_public_score", 0.74169)),
+        v2b_public_score=float(cfg.get("v2b_public_score", 0.92121)),
+        v2b_average_time_per_image=(
+            None
+            if cfg.get("v2b_average_time_per_image") in (None, "")
+            else float(cfg.get("v2b_average_time_per_image"))
+        ),
+        public_score_decision=str(cfg.get("public_score_decision", "analysis_only_pending_manual_review")),
     )
     _validate_training_config(config)
     return config
 
 
 def _validate_training_config(config: TrainingRunConfig) -> None:
+    if config.v5:
+        _validate_v5_training_config(config)
+        return
     if config.v2:
         _validate_v2_training_config(config)
         return
@@ -315,6 +394,35 @@ def _validate_v2_training_config(config: TrainingRunConfig) -> None:
         raise TrainingValidationError("V2 speed_ceiling_multiplier must be > 0 and <= 2.0")
     if config.close_f1_tolerance != 0.002:
         raise TrainingValidationError("V2 close_f1_tolerance must remain 0.002")
+    if config.batch_size < 1:
+        raise TrainingValidationError("classifier.batch_size must be at least 1")
+    if config.num_workers < 0:
+        raise TrainingValidationError("classifier.num_workers must be non-negative")
+    if config.log_every_n_batches < 1:
+        raise TrainingValidationError("classifier.log_every_n_batches must be at least 1")
+    if config.epochs < 1:
+        raise TrainingValidationError("classifier.epochs must be at least 1")
+
+
+def _validate_v5_training_config(config: TrainingRunConfig) -> None:
+    try:
+        validate_v5_classifier_scope(config.model_name, config.fallback_model_name)
+    except ValueError as exc:
+        raise TrainingValidationError(str(exc)) from exc
+    if config.image_size != 512:
+        raise TrainingValidationError("V5 classifier.image_size must be 512")
+    if config.num_classes != 2:
+        raise TrainingValidationError("classifier.num_classes must be 2")
+    if config.hard_example_strategy not in V5_ALLOWED_HARD_EXAMPLE_STRATEGIES:
+        raise TrainingValidationError("V5 hard_example_strategy must be analysis_only or oversample")
+    if config.augmentation_recipe not in {"v2_safe", "v5_safe"}:
+        raise TrainingValidationError("V5 augmentation_recipe must be v2_safe or v5_safe")
+    if config.speed_ceiling_multiplier > 2.0 or config.speed_ceiling_multiplier <= 0:
+        raise TrainingValidationError("V5 speed_ceiling_multiplier must be > 0 and <= 2.0")
+    if config.public_score_baseline != 0.92181:
+        raise TrainingValidationError("V5 public_score_baseline must remain 0.92181")
+    if config.split_source not in {"v2b", "v2b_compatible"} and not Path(config.split_source).exists():
+        raise TrainingValidationError("V5 split_source must be v2b_compatible, v2b, or an existing split path")
     if config.batch_size < 1:
         raise TrainingValidationError("classifier.batch_size must be at least 1")
     if config.num_workers < 0:
@@ -563,11 +671,22 @@ def run_training(
     _log(f"num_workers={active_config.num_workers}")
     _log(f"epochs={active_config.epochs}")
 
-    model = create_classifier(
-        model_name="tiny_cnn" if synthetic_smoke else active_config.model_name,
-        num_classes=1,
-        synthetic_smoke=synthetic_smoke,
-    ).to(device)
+    selected_model_name = active_config.model_name
+    try:
+        model = create_classifier(
+            model_name="tiny_cnn" if synthetic_smoke else active_config.model_name,
+            num_classes=1,
+            synthetic_smoke=synthetic_smoke,
+        ).to(device)
+    except RuntimeError:
+        if not active_config.v5:
+            raise
+        selected_model_name = active_config.fallback_model_name
+        model = create_classifier(
+            model_name="tiny_cnn" if synthetic_smoke else active_config.fallback_model_name,
+            num_classes=1,
+            synthetic_smoke=synthetic_smoke,
+        ).to(device)
     if active_config.imbalance_strategy.startswith("focal"):
         loss_fn = create_binary_focal_loss(
             negative_count=train_counts["0"],
@@ -631,20 +750,35 @@ def run_training(
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
 
     assert best_state is not None and best_metrics is not None and best_threshold is not None
-    model_path = _resolve_output_path(output_root, V2_MODEL_OUTPUT if active_config.v2 else DEFAULT_MODEL_OUTPUT)
-    metrics_path = _resolve_output_path(output_root, V2_METRICS_OUTPUT if active_config.v2 else DEFAULT_METRICS_OUTPUT)
-    threshold_path = _resolve_output_path(output_root, V2_THRESHOLD_OUTPUT if active_config.v2 else DEFAULT_THRESHOLD_OUTPUT)
+    model_output = V5_MODEL_OUTPUT if active_config.v5 else V2_MODEL_OUTPUT if active_config.v2 else DEFAULT_MODEL_OUTPUT
+    metrics_output = V5_METRICS_OUTPUT if active_config.v5 else V2_METRICS_OUTPUT if active_config.v2 else DEFAULT_METRICS_OUTPUT
+    threshold_output = V5_THRESHOLD_OUTPUT if active_config.v5 else V2_THRESHOLD_OUTPUT if active_config.v2 else DEFAULT_THRESHOLD_OUTPUT
+    predictions_output = V5_PREDICTIONS_OUTPUT if active_config.v5 else V2_PREDICTIONS_OUTPUT if active_config.v2 else DEFAULT_PREDICTIONS_OUTPUT
+    model_path = _resolve_output_path(output_root, model_output)
+    metrics_path = _resolve_output_path(output_root, metrics_output)
+    threshold_path = _resolve_output_path(output_root, threshold_output)
     label_distribution_path = _resolve_output_path(output_root, DEFAULT_LABEL_DISTRIBUTION_OUTPUT)
     split_distribution_path = _resolve_output_path(output_root, DEFAULT_SPLIT_DISTRIBUTION_OUTPUT)
-    predictions_path = _resolve_output_path(output_root, V2_PREDICTIONS_OUTPUT if active_config.v2 else DEFAULT_PREDICTIONS_OUTPUT)
+    predictions_path = _resolve_output_path(output_root, predictions_output)
     for path in (model_path, metrics_path, threshold_path, label_distribution_path, split_distribution_path, predictions_path):
         path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.save(best_state, model_path)
     predictions = _build_predictions(split.validation, best_probs, best_threshold.threshold)
-    _write_predictions(predictions_path, predictions)
+    _write_predictions(predictions_path, predictions, v5=active_config.v5)
     runtime_seconds = round(time.perf_counter() - started, 6)
-    _write_threshold(threshold_path, best_threshold)
+    speed_ratio_vs_v2b = (
+        runtime_seconds / active_config.v2b_average_time_per_image
+        if active_config.v5 and active_config.v2b_average_time_per_image and active_config.v2b_average_time_per_image > 0
+        else None
+    )
+    _write_threshold(
+        threshold_path,
+        best_threshold,
+        split_source=active_config.split_source,
+        selection_source="validation_only",
+        confusion_counts=best_metrics.confusion_counts if active_config.v5 else None,
+    )
     _write_label_distribution(
         label_distribution_path,
         total_rows=load_result.train_csv_row_count,
@@ -681,8 +815,42 @@ def run_training(
                 **split_disjointness,
                 "hard_examples": asdict(hard_example_report),
             },
+            selected_model_name=selected_model_name,
+            fallback_model_name=active_config.fallback_model_name if active_config.v5 else "",
+            split_source=active_config.split_source if active_config.v5 else "",
+            validation_prediction_distribution=_prediction_distribution_from_probabilities(
+                best_probs,
+                best_threshold.threshold,
+            ),
+            validation_target_distribution=validation_counts,
+            test_prediction_distribution={},
+            submission_row_count=0,
+            v2b_benchmark_reference=(
+                {
+                    "reference_name": "v2b",
+                    "average_time_per_image": active_config.v2b_average_time_per_image,
+                    "speed_ceiling_multiplier": active_config.speed_ceiling_multiplier,
+                }
+                if active_config.v5
+                else {}
+            ),
+            speed_ratio_vs_v2b=None if speed_ratio_vs_v2b is None else round(speed_ratio_vs_v2b, 6),
+            within_v5_speed_ceiling=(
+                None
+                if speed_ratio_vs_v2b is None
+                else speed_ratio_vs_v2b <= active_config.speed_ceiling_multiplier
+            ),
+            public_score_baseline=active_config.public_score_baseline,
+            v2b_public_score=active_config.v2b_public_score,
+            v3_detector_public_score=active_config.v3_detector_public_score,
+            public_score_decision=active_config.public_score_decision,
+            analysis_only=active_config.public_score_decision != "accepted_best_public_submission",
+            selection_source="validation_only",
         ),
     )
+    if active_config.v5:
+        validate_v5_metrics_report(metrics_path)
+        validate_v5_validation_predictions(predictions_path, expected_validation_ids=[example.image_id for example in split.validation])
     if active_config.v2 and v1_baseline is not None:
         comparison_path = _resolve_output_path(output_root, V2_COMPARISON_OUTPUT)
         comparison_path.parent.mkdir(parents=True, exist_ok=True)
@@ -824,6 +992,14 @@ def validate_v2_scope_guards(options: dict[str, object]) -> None:
         raise TrainingValidationError("SPEC-007 V2 classifier forbids: " + ", ".join(enabled))
 
 
+def validate_v5_scope_guards(options: dict[str, object]) -> None:
+    """Reject detector/fusion/dashboard scope changes for SPEC-010."""
+
+    enabled = sorted(key for key, value in options.items() if key in V2_FORBIDDEN_FLAGS and bool(value))
+    if enabled:
+        raise TrainingValidationError("SPEC-010 V5 classifier forbids: " + ", ".join(enabled))
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Train the SPEC-005 binary classifier.")
     parser.add_argument("--config", default="configs/classifier.yaml")
@@ -878,6 +1054,11 @@ def _optional_positive_int(value: object, field_name: str) -> Optional[int]:
 
 
 def _resolve_output_path(output_root: Path, default_path: Path) -> Path:
+    try:
+        default_path.relative_to(output_root)
+        return default_path
+    except ValueError:
+        pass
     if output_root in (Path("."), Path("")):
         return default_path
     try:
@@ -990,32 +1171,48 @@ def _build_predictions(
             probability=float(probability),
             threshold=float(threshold),
             predicted_label=int(float(probability) >= threshold),
+            prob_bad=float(probability),
+            classifier_prediction=int(float(probability) >= threshold),
+            target=int(float(probability) >= threshold),
         )
         for example, probability in zip(examples, probabilities)
     ]
 
 
-def _write_predictions(path: Path, predictions: Sequence[ValidationPrediction]) -> None:
+def _write_predictions(path: Path, predictions: Sequence[ValidationPrediction], *, v5: bool = False) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["image_id", "true_label", "probability", "threshold", "predicted_label"])
+        fieldnames = (
+            ["image_id", "true_label", "prob_bad", "classifier_prediction", "target"]
+            if v5
+            else ["image_id", "true_label", "probability", "threshold", "predicted_label"]
+        )
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for prediction in predictions:
-            writer.writerow(prediction.__dict__)
+            row = prediction.__dict__
+            writer.writerow({fieldname: row[fieldname] for fieldname in fieldnames})
 
 
-def _write_threshold(path: Path, threshold: ThresholdSearchResult) -> None:
-    path.write_text(
-        json.dumps(
-            {
-                "threshold": threshold.threshold,
-                "f1_score": threshold.f1_score,
-                "tie_break": threshold.tie_break,
-                "candidate_count": threshold.candidate_count,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+def _write_threshold(
+    path: Path,
+    threshold: ThresholdSearchResult,
+    *,
+    split_source: str = "",
+    selection_source: str = "validation_only",
+    confusion_counts: Optional[dict[str, int]] = None,
+) -> None:
+    payload = {
+        "threshold": threshold.threshold,
+        "f1_score": threshold.f1_score,
+        "tie_break": threshold.tie_break,
+        "candidate_count": threshold.candidate_count,
+    }
+    if split_source:
+        payload["split_source"] = split_source
+        payload["selection_source"] = selection_source
+    if confusion_counts is not None:
+        payload["confusion_counts"] = confusion_counts
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _write_label_distribution(
@@ -1059,6 +1256,86 @@ def _write_split_distribution(path: Path, *, split: SplitAssignment) -> None:
 
 def _write_metrics(path: Path, *, report: ClassifierMetricsReport) -> None:
     path.write_text(json.dumps(asdict(report), indent=2, default=str), encoding="utf-8")
+
+
+def _prediction_distribution_from_probabilities(probabilities: Sequence[float], threshold: float) -> dict[str, int]:
+    predictions = [int(float(probability) >= threshold) for probability in probabilities]
+    return {"0": sum(1 for value in predictions if value == 0), "1": sum(1 for value in predictions if value == 1)}
+
+
+def validate_v5_validation_predictions(path: str | Path, *, expected_validation_ids: Sequence[str] | None = None) -> None:
+    rows = _read_csv_rows(path, required_columns=["image_id", "true_label", "prob_bad", "classifier_prediction", "target"])
+    _validate_probability_rows(rows, allow_true_label=True)
+    if expected_validation_ids is not None:
+        actual = {row["image_id"] for row in rows}
+        expected = set(expected_validation_ids)
+        if actual != expected:
+            raise TrainingValidationError("V5 validation predictions must match the V2B-compatible validation split")
+
+
+def validate_v5_test_predictions(path: str | Path) -> None:
+    rows = _read_csv_rows(path, required_columns=["image_id", "prob_bad", "classifier_prediction", "target"])
+    forbidden = {"true_label", "label", "public_score", "sample_label"} & set(rows[0]) if rows else set()
+    if forbidden:
+        raise TrainingValidationError("V5 test predictions contain forbidden label or review columns")
+    _validate_probability_rows(rows, allow_true_label=False)
+
+
+def validate_v5_threshold_report(path: str | Path) -> None:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    required = {"threshold", "f1_score", "candidate_count", "split_source", "selection_source", "confusion_counts"}
+    missing = sorted(required - set(payload))
+    if missing:
+        raise TrainingValidationError("V5 threshold report missing: " + ", ".join(missing))
+
+
+def validate_v5_metrics_report(path: str | Path) -> None:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    required = {
+        "f1_score",
+        "threshold",
+        "validation_target_distribution",
+        "validation_prediction_distribution",
+        "submission_row_count",
+        "v2b_benchmark_reference",
+        "public_score_baseline",
+        "v3_detector_public_score",
+        "public_score_decision",
+    }
+    missing = sorted(required - set(payload))
+    if missing:
+        raise TrainingValidationError("V5 metrics report missing: " + ", ".join(missing))
+
+
+def _read_csv_rows(path: str | Path, *, required_columns: Sequence[str]) -> list[dict[str, str]]:
+    with Path(path).open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+        fieldnames = reader.fieldnames or []
+    missing = [column for column in required_columns if column not in fieldnames]
+    if missing:
+        raise TrainingValidationError("Missing required CSV columns: " + ", ".join(missing))
+    if not rows:
+        raise TrainingValidationError(f"CSV contains no rows: {path}")
+    return rows
+
+
+def _validate_probability_rows(rows: Sequence[dict[str, str]], *, allow_true_label: bool) -> None:
+    image_ids = [row["image_id"] for row in rows]
+    if len(image_ids) != len(set(image_ids)):
+        raise TrainingValidationError("Probability export contains duplicate image_id rows")
+    for row in rows:
+        try:
+            prob_bad = float(row["prob_bad"])
+        except (TypeError, ValueError) as exc:
+            raise TrainingValidationError("prob_bad must be numeric") from exc
+        if not 0.0 <= prob_bad <= 1.0:
+            raise TrainingValidationError("prob_bad must be between 0 and 1")
+        for key in ("classifier_prediction", "target"):
+            if int(row[key]) not in (0, 1):
+                raise TrainingValidationError(f"{key} must be binary")
+        if allow_true_label and int(row["true_label"]) not in (0, 1):
+            raise TrainingValidationError("true_label must be binary")
 
 
 def _normalize_git_path(path: Path) -> str:
