@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import torch
 import yaml
 
 
@@ -106,6 +107,77 @@ def test_v2b_enhanced_training_configs_load_with_required_ladder_values():
     assert cfg_448.weighted_sampler is False
     assert cfg_448.augmentation_recipe == "mild_safe"
     assert cfg_448.split_source == "v2b_compatible"
+
+
+def test_start_checkpoint_loader_applies_tiny_classifier_weights(tmp_path):
+    from src.models.classifier import create_classifier
+    from src.training.train_classifier import TrainingRunConfig, load_start_checkpoint_if_configured
+
+    checkpoint_model = create_classifier(model_name="tiny_cnn", synthetic_smoke=True)
+    for parameter in checkpoint_model.parameters():
+        parameter.data.fill_(0.25)
+    checkpoint_path = tmp_path / "classifier_best.pth"
+    torch.save({"model_state_dict": checkpoint_model.state_dict()}, checkpoint_path)
+
+    model = create_classifier(model_name="tiny_cnn", synthetic_smoke=True)
+    for parameter in model.parameters():
+        parameter.data.zero_()
+
+    config = TrainingRunConfig(
+        model_name="efficientnet_b1",
+        experiment_name="v2b_enhanced_384",
+        v2=True,
+        start_checkpoint=str(checkpoint_path),
+        imbalance_strategy="bce",
+        weighted_sampler=False,
+        hard_example_strategy="none",
+        augmentation_recipe="mild_safe",
+    )
+    loaded = load_start_checkpoint_if_configured(model, config, torch.device("cpu"))
+
+    assert loaded == checkpoint_path
+    assert all(torch.allclose(parameter, torch.full_like(parameter, 0.25)) for parameter in model.parameters())
+
+
+def test_missing_configured_start_checkpoint_fails_clearly(tmp_path):
+    from src.models.classifier import create_classifier
+    from src.training.train_classifier import TrainingRunConfig, load_start_checkpoint_if_configured
+
+    model = create_classifier(model_name="tiny_cnn", synthetic_smoke=True)
+    missing = tmp_path / "missing.pth"
+    config = TrainingRunConfig(
+        model_name="efficientnet_b1",
+        experiment_name="v2b_enhanced_384",
+        v2=True,
+        start_checkpoint=str(missing),
+        imbalance_strategy="bce",
+        weighted_sampler=False,
+        hard_example_strategy="none",
+        augmentation_recipe="mild_safe",
+    )
+
+    with pytest.raises(FileNotFoundError, match="Configured start_checkpoint not found"):
+        load_start_checkpoint_if_configured(model, config, torch.device("cpu"))
+
+
+def test_v2b_enhanced_training_requires_loaded_start_checkpoint():
+    from src.models.classifier import create_classifier
+    from src.training.train_classifier import TrainingRunConfig, TrainingValidationError, load_start_checkpoint_if_configured
+
+    model = create_classifier(model_name="tiny_cnn", synthetic_smoke=True)
+    config = TrainingRunConfig(
+        model_name="efficientnet_b1",
+        experiment_name="v2b_enhanced_384",
+        v2=True,
+        start_checkpoint="",
+        imbalance_strategy="bce",
+        weighted_sampler=False,
+        hard_example_strategy="none",
+        augmentation_recipe="mild_safe",
+    )
+
+    with pytest.raises(TrainingValidationError, match="requires start_checkpoint"):
+        load_start_checkpoint_if_configured(model, config, torch.device("cpu"))
 
 
 def test_supported_modes_margins_and_threshold_candidates():
