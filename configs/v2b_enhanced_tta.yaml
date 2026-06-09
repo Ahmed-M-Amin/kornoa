@@ -1,0 +1,33 @@
+paths:
+  dataset_root: 1st-krones-vision-ai-challenge
+  model_checkpoint: outputs/kaggle_v2b_enhanced/448/models/classifier_best.pth
+  model_config: configs/v2b_enhanced_448.yaml
+  output_root: outputs/kaggle_v2b_enhanced/tta
+  validation_predictions: outputs/kaggle_v2b_enhanced/tta/input/val_predictions.csv
+  test_predictions: outputs/kaggle_v2b_enhanced/tta/input/test_predictions.csv
+
+model:
+  model_name: efficientnet_b1
+  image_size: 448
+
+tta:
+  modes:
+    - no_tta
+    - hflip_tta
+    - gated_hflip_tta
+  margins:
+    - 0.04
+    - 0.06
+    - 0.08
+
+threshold_search:
+  start: 0.15
+  end: 0.60
+  step: 0.01
+  positive_class: 1
+  zero_division: 0
+
+output:
+  save_validation_predictions: true
+  save_selected_submission: true
+  save_all_candidates_report: true

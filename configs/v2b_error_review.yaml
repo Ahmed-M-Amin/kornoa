@@ -1,0 +1,16 @@
+paths:
+  v1_correct_v2b_wrong: outputs/analysis/v1_v2b_audit/errors/v1_correct_v2b_wrong.csv
+  both_wrong: outputs/analysis/v1_v2b_audit/errors/both_wrong.csv
+  high_confidence_wrong: outputs/analysis/v1_v2b_audit/errors/high_confidence_wrong.csv
+  uncertain: outputs/analysis/v1_v2b_audit/errors/uncertain.csv
+  train_csv: 1st-krones-vision-ai-challenge/train.csv
+  train_annotations: 1st-krones-vision-ai-challenge/train_annotations.json
+  train_images: 1st-krones-vision-ai-challenge/train_images
+
+output:
+  root: outputs/analysis/v2b_error_review
+
+review:
+  contact_sheet_columns: 4
+  contact_sheet_rows: 4
+  contact_sheet_image_size: 160

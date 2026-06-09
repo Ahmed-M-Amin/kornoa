@@ -25,7 +25,7 @@ def create_preprocessing_profile(
 
     if split not in SUPPORTED_SPLITS:
         raise ValueError(f"Unsupported preprocessing split: {split}")
-    if augmentation_recipe not in {"v1", "v2_safe", "v5_safe"}:
+    if augmentation_recipe not in {"v1", "mild_safe", "v2_safe", "v5_safe"}:
         raise ValueError(f"Unsupported augmentation recipe: {augmentation_recipe}")
 
     if split == "train" and augmentation_recipe == "v5_safe":
