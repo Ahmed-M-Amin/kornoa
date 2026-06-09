@@ -1,0 +1,13 @@
+model:
+  model_name: efficientnet_b1
+  start_checkpoint: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/models/classifier_best.pth
+  image_size: 384
+
+training:
+  epochs: 4
+  learning_rate: 0.00003
+  loss: bce
+  weighted_sampler: false
+  focal_loss: false
+  augmentation_recipe: mild_safe
+  split_source: v2b_compatible

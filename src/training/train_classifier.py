@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
 import numpy as np
 import torch
+import torch.nn as nn
 import yaml
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
@@ -144,7 +145,9 @@ class TrainingRunConfig:
     v2: bool = False
     v5: bool = False
     fallback_model_name: str = "efficientnet_b2"
+    start_checkpoint: str = ""
     split_source: str = "v2b_compatible"
+    early_stopping: bool = False
     public_score_baseline: float = 0.92181
     v3_detector_public_score: float = 0.74169
     v2b_public_score: float = 0.92121
@@ -285,7 +288,11 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     training_cfg = raw.get("training", {})
     data_cfg = raw.get("data", {})
     benchmark_cfg = raw.get("benchmark", {})
-    is_v5 = bool(cfg.get("v5", False) or raw.get("v5", False) or "v5_strong_classifier" in Path(config_path).name)
+    config_name = Path(config_path).name
+    is_v5 = bool(cfg.get("v5", False) or raw.get("v5", False) or "v5_strong_classifier" in config_name)
+    is_v1r = bool("v1r_repaired_baseline" in Path(config_path).name or raw.get("v1r", False))
+    is_v5b = bool("v5b_safe_finetune" in Path(config_path).name or raw.get("v5b", False))
+    is_v2b_enhanced = bool("v2b_enhanced" in config_name)
     if is_v5:
         cfg = {
             **cfg,
@@ -302,6 +309,40 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
             "split_source": data_cfg.get("split_source", cfg.get("split_source")),
             "speed_ceiling_multiplier": benchmark_cfg.get("speed_ceiling_multiplier", cfg.get("speed_ceiling_multiplier")),
             "v2b_average_time_per_image": benchmark_cfg.get("v2b_average_time_per_image", cfg.get("v2b_average_time_per_image")),
+        }
+    elif is_v5b or is_v2b_enhanced:
+        default_experiment = "v2b_enhanced_448" if "448" in config_name else "v2b_enhanced_384"
+        cfg = {
+            **cfg,
+            "v2": True,
+            "experiment_name": cfg.get("experiment_name", default_experiment if is_v2b_enhanced else "v5b_safe_finetune"),
+            "model_name": model_cfg.get("model_name", cfg.get("model_name")),
+            "image_size": model_cfg.get("image_size", cfg.get("image_size")),
+            "start_checkpoint": model_cfg.get("start_checkpoint", cfg.get("start_checkpoint")),
+            "epochs": training_cfg.get("epochs", cfg.get("epochs")),
+            "learning_rate": training_cfg.get("learning_rate", cfg.get("learning_rate")),
+            "imbalance_strategy": training_cfg.get("loss", cfg.get("imbalance_strategy")),
+            "weighted_sampler": training_cfg.get("weighted_sampler", cfg.get("weighted_sampler")),
+            "augmentation_recipe": training_cfg.get("augmentation_recipe", cfg.get("augmentation_recipe")),
+            "split_source": training_cfg.get("split_source", cfg.get("split_source")),
+            "hard_example_strategy": training_cfg.get(
+                "hard_examples",
+                cfg.get("hard_example_strategy", "none" if is_v2b_enhanced else None),
+            ),
+            "early_stopping": training_cfg.get("early_stopping", cfg.get("early_stopping")),
+        }
+    elif is_v1r:
+        cfg = {
+            **cfg,
+            "experiment_name": cfg.get("experiment_name", "v1r_repaired_baseline"),
+            "model_name": model_cfg.get("model_name", cfg.get("model_name")),
+            "image_size": model_cfg.get("image_size", cfg.get("image_size")),
+            "epochs": training_cfg.get("epochs", cfg.get("epochs")),
+            "learning_rate": training_cfg.get("learning_rate", cfg.get("learning_rate")),
+            "imbalance_strategy": training_cfg.get("loss", cfg.get("imbalance_strategy")),
+            "weighted_sampler": training_cfg.get("weighted_sampler", cfg.get("weighted_sampler")),
+            "augmentation_recipe": training_cfg.get("augmentation_recipe", cfg.get("augmentation_recipe")),
+            "split_source": training_cfg.get("split_source", cfg.get("split_source")),
         }
     is_v2 = bool(cfg.get("v2", False) or raw.get("v2", False) or "classifier_v2" in Path(config_path).name)
     if is_v2:
@@ -337,7 +378,9 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         v2=is_v2,
         v5=is_v5,
         fallback_model_name=str(cfg.get("fallback_model_name", "efficientnet_b2")),
+        start_checkpoint=str(cfg.get("start_checkpoint", "")),
         split_source=str(cfg.get("split_source", "v2b_compatible")),
+        early_stopping=bool(cfg.get("early_stopping", False)),
         public_score_baseline=float(cfg.get("public_score_baseline", 0.92181)),
         v3_detector_public_score=float(cfg.get("v3_detector_public_score", 0.74169)),
         v2b_public_score=float(cfg.get("v2b_public_score", 0.92121)),
@@ -361,8 +404,8 @@ def _validate_training_config(config: TrainingRunConfig) -> None:
         return
     if config.model_name != "efficientnet_b0":
         raise TrainingValidationError("classifier.model_name must be efficientnet_b0 for SPEC-005")
-    if config.image_size != 384:
-        raise TrainingValidationError("classifier.image_size must be 384")
+    if config.image_size not in {320, 384}:
+        raise TrainingValidationError("classifier.image_size must be 320 or 384")
     if config.num_classes != 2:
         raise TrainingValidationError("classifier.num_classes must be 2")
     if config.batch_size < 1:
@@ -388,8 +431,10 @@ def _validate_v2_training_config(config: TrainingRunConfig) -> None:
         raise TrainingValidationError("V2 hard_example_strategy must be none, analysis_only, or oversample")
     if not config.hard_example_source:
         raise TrainingValidationError("V2 hard_example_source must be a path or auto")
-    if config.augmentation_recipe not in {"v1", "v2_safe"}:
-        raise TrainingValidationError("V2 augmentation_recipe must be v1 or v2_safe")
+    if config.augmentation_recipe not in {"v1", "v2_safe", "mild_safe"}:
+        raise TrainingValidationError("V2 augmentation_recipe must be v1, mild_safe, or v2_safe")
+    if config.imbalance_strategy not in {"weighted_bce", "bce", "focal_loss_weighted_sampler"}:
+        raise TrainingValidationError("V2 imbalance_strategy must be weighted_bce, bce, or focal_loss_weighted_sampler")
     if config.speed_ceiling_multiplier > 2.0 or config.speed_ceiling_multiplier <= 0:
         raise TrainingValidationError("V2 speed_ceiling_multiplier must be > 0 and <= 2.0")
     if config.close_f1_tolerance != 0.002:
@@ -687,7 +732,10 @@ def run_training(
             num_classes=1,
             synthetic_smoke=synthetic_smoke,
         ).to(device)
-    if active_config.imbalance_strategy.startswith("focal"):
+    if active_config.imbalance_strategy == "bce":
+        loss_fn = nn.BCEWithLogitsLoss().to(device)
+        pos_weight = 1.0
+    elif active_config.imbalance_strategy.startswith("focal"):
         loss_fn = create_binary_focal_loss(
             negative_count=train_counts["0"],
             positive_count=train_counts["1"],
@@ -696,13 +744,14 @@ def run_training(
             use_pos_weight="weighted" in active_config.imbalance_strategy,
             device=device,
         ).to(device)
+        pos_weight = train_counts["0"] / train_counts["1"]
     else:
         loss_fn = create_weighted_bce_loss(
             negative_count=train_counts["0"],
             positive_count=train_counts["1"],
             device=device,
         ).to(device)
-    pos_weight = train_counts["0"] / train_counts["1"]
+        pos_weight = train_counts["0"] / train_counts["1"]
     optimizer = torch.optim.AdamW(model.parameters(), lr=active_config.learning_rate, weight_decay=active_config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(active_config.epochs, 1))
     loaders = build_training_dataloaders(

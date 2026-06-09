@@ -1,0 +1,29 @@
+paths:
+  dataset_root: 1st-krones-vision-ai-challenge
+  train_csv: 1st-krones-vision-ai-challenge/train.csv
+  train_annotations: 1st-krones-vision-ai-challenge/train_annotations.json
+  bottletypes: 1st-krones-vision-ai-challenge/bottletypes.csv
+  v1_predictions: artifacts/kaggle_v1_artifacts/outputs/kaggle_v1/predictions/val_classifier_predictions.csv
+  v1_threshold: artifacts/kaggle_v1_artifacts/outputs/kaggle_v1/reports/best_threshold.json
+  v1_metrics: artifacts/kaggle_v1_artifacts/outputs/kaggle_v1/reports/classifier_metrics.json
+  v2b_predictions: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv
+  v2b_threshold: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/reports/best_threshold.json
+  v2b_metrics: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/reports/classifier_metrics.json
+  v3_detector_val_predictions: artifacts/krones_v3_yolov8n_50epoch_artifacts/val_detector_binary_predictions.csv
+  v4_hybrid_metrics: outputs/hybrid/v4/reports/hybrid_metrics.json
+  v4_hybrid_diff: outputs/hybrid/v4/reports/v2b_vs_v4_diff.json
+output:
+  root: outputs/analysis/v1_v2b_audit
+analysis:
+  positive_class: 1
+  threshold_grid_start: 0.01
+  threshold_grid_end: 0.99
+  threshold_grid_step: 0.01
+  uncertainty_margin: 0.05
+  high_confidence_wrong_margin: 0.2
+dataset:
+  bottletypes_csv: 1st-krones-vision-ai-challenge/bottletypes.csv
+v1:
+  val_predictions: artifacts/kaggle_v1_artifacts/outputs/kaggle_v1/predictions/val_classifier_predictions.csv
+  best_threshold: artifacts/kaggle_v1_artifacts/outputs/kaggle_v1/reports/best_threshold.json
+  metrics: artifacts/kaggle_v1_artifacts/outputs/kaggle_v1/reports/classifier_metrics.json
