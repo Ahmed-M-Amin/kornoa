@@ -732,6 +732,7 @@ def run_training(
             num_classes=1,
             synthetic_smoke=synthetic_smoke,
         ).to(device)
+    load_start_checkpoint_if_configured(model, active_config, device)
     if active_config.imbalance_strategy == "bce":
         loss_fn = nn.BCEWithLogitsLoss().to(device)
         pos_weight = 1.0
@@ -981,6 +982,45 @@ def build_weighted_random_sampler(
         replacement=True,
         generator=generator,
     )
+
+
+def load_start_checkpoint_if_configured(
+    model: torch.nn.Module,
+    config: TrainingRunConfig,
+    device: torch.device,
+) -> Optional[Path]:
+    """Load a configured fine-tuning checkpoint into an initialized model."""
+
+    checkpoint_value = config.start_checkpoint.strip()
+    if not checkpoint_value:
+        if _requires_start_checkpoint(config):
+            raise TrainingValidationError("V2B-Enhanced training requires start_checkpoint to be configured and loaded")
+        return None
+
+    checkpoint_path = Path(checkpoint_value)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Configured start_checkpoint not found: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = _extract_model_state_dict(checkpoint, checkpoint_path)
+    model.load_state_dict(state_dict)
+    _log(f"loaded_start_checkpoint={checkpoint_path}")
+    return checkpoint_path
+
+
+def _extract_model_state_dict(checkpoint: object, checkpoint_path: Path) -> dict[str, torch.Tensor]:
+    if isinstance(checkpoint, dict):
+        for key in ("model_state_dict", "state_dict", "model"):
+            value = checkpoint.get(key)
+            if isinstance(value, dict):
+                return value
+        if checkpoint and all(torch.is_tensor(value) for value in checkpoint.values()):
+            return checkpoint
+    raise TrainingValidationError(f"Unsupported start_checkpoint format: {checkpoint_path}")
+
+
+def _requires_start_checkpoint(config: TrainingRunConfig) -> bool:
+    return "v2b_enhanced" in config.experiment_name.lower()
 
 
 def build_hard_example_weight_map(
