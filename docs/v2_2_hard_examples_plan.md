@@ -6,6 +6,12 @@ V2.2 prepares conservative hard-example training support from the automatic V2.1
 
 This is preparation only. Real training requires later approval.
 
+Runtime artifacts for this candidate are isolated under:
+
+```text
+outputs/kaggle_v2_2/v2_2_hard_examples/
+```
+
 ## Baseline Context
 
 - Original V2B validation F1: `0.9269170766830673`
@@ -33,6 +39,8 @@ Definitions:
 - uncertain examples are near-threshold or ambiguous examples and are not strong hard examples by default
 
 The visual cause tags are automatic suggestions only. They are not human ground truth.
+
+Current hard-example strategy is explicitly `analysis_only`: files are validated, counts are logged, and train-image availability is checked before training starts, but no active oversampling/reweighting is applied yet. Conservative sampler integration is a separate future task and must be approved before real V2.2 training.
 
 ## Safety Boundaries
 

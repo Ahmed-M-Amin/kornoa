@@ -110,6 +110,7 @@ def test_v2_2_config_is_safe_and_uses_binary_f1_contract():
     hard_examples = payload["hard_examples"]
     metrics = payload["metrics"]
 
+    assert payload["output"]["root"] == "outputs/kaggle_v2_2/v2_2_hard_examples"
     assert hard_examples["enabled"] is True
     assert hard_examples["hard_negatives"]
     assert hard_examples["hard_positives"]
@@ -121,6 +122,7 @@ def test_v2_2_config_is_safe_and_uses_binary_f1_contract():
     assert payload["safety"]["allow_test_labels"] is False
     assert metrics["positive_class"] == 1
     assert metrics["zero_division"] == 0
+    assert payload["training"]["hard_example_strategy"] == "analysis_only"
 
 
 def test_training_cli_accepts_v2_2_smoke_aliases_without_starting_real_training(monkeypatch):
@@ -163,3 +165,31 @@ def test_training_cli_accepts_v2_2_smoke_aliases_without_starting_real_training(
     assert captured["config"].limit_val_batches == 5
     assert captured["config"].hard_examples_enabled is True
     assert captured["dataset_root"] == "1st-krones-vision-ai-challenge"
+    assert captured["output_root"] == "outputs/kaggle_v2_2/v2_2_hard_examples"
+
+
+def test_v2_2_output_paths_are_isolated_from_old_v2_outputs():
+    from src.training.train_classifier import (
+        V2_2_MODEL_OUTPUT,
+        V2_2_METRICS_OUTPUT,
+        V2_2_PREDICTIONS_OUTPUT,
+        V2_2_THRESHOLD_OUTPUT,
+        _default_model_output_for_config,
+        _default_predictions_output_for_config,
+        _default_threshold_output_for_config,
+        _resolve_output_path,
+        load_classifier_config,
+    )
+
+    config = load_classifier_config("configs/v2_2_hard_examples.yaml")
+    output_root = Path(config.output_root)
+
+    assert _default_model_output_for_config(config) == V2_2_MODEL_OUTPUT
+    assert _default_threshold_output_for_config(config) == V2_2_THRESHOLD_OUTPUT
+    assert _default_predictions_output_for_config(config) == V2_2_PREDICTIONS_OUTPUT
+    assert _resolve_output_path(output_root, V2_2_MODEL_OUTPUT) == output_root / "models/classifier_best.pth"
+    assert _resolve_output_path(output_root, V2_2_METRICS_OUTPUT) == output_root / "reports/classifier_metrics.json"
+    assert _resolve_output_path(output_root, V2_2_THRESHOLD_OUTPUT) == output_root / "reports/best_threshold.json"
+    assert _resolve_output_path(output_root, V2_2_PREDICTIONS_OUTPUT) == output_root / "predictions/val_classifier_predictions.csv"
+    assert "kaggle_v2_2" in str(_default_model_output_for_config(config))
+    assert "kaggle_v2/models" not in str(_default_model_output_for_config(config)).replace("\\", "/")

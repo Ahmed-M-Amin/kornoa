@@ -42,6 +42,12 @@ V2_METRICS_OUTPUT = V2_OUTPUT_ROOT / "reports/classifier_metrics.json"
 V2_THRESHOLD_OUTPUT = V2_OUTPUT_ROOT / "reports/best_threshold.json"
 V2_PREDICTIONS_OUTPUT = V2_OUTPUT_ROOT / "predictions/val_classifier_predictions.csv"
 V2_COMPARISON_OUTPUT = V2_OUTPUT_ROOT / "reports/v1_vs_v2_comparison.json"
+V2_2_OUTPUT_ROOT = Path("outputs/kaggle_v2_2/v2_2_hard_examples")
+V2_2_MODEL_OUTPUT = V2_2_OUTPUT_ROOT / "models/classifier_best.pth"
+V2_2_METRICS_OUTPUT = V2_2_OUTPUT_ROOT / "reports/classifier_metrics.json"
+V2_2_THRESHOLD_OUTPUT = V2_2_OUTPUT_ROOT / "reports/best_threshold.json"
+V2_2_PREDICTIONS_OUTPUT = V2_2_OUTPUT_ROOT / "predictions/val_classifier_predictions.csv"
+V2_2_COMPARISON_OUTPUT = V2_2_OUTPUT_ROOT / "reports/v1_vs_v2_comparison.json"
 V5_OUTPUT_ROOT = Path("outputs/kaggle_v5/v5_strong_classifier")
 V5_MODEL_OUTPUT = V5_OUTPUT_ROOT / "models/classifier_best.pth"
 V5_METRICS_OUTPUT = V5_OUTPUT_ROOT / "reports/classifier_metrics.json"
@@ -118,6 +124,7 @@ class TrainingExampleLoadResult:
 @dataclass(frozen=True)
 class TrainingRunConfig:
     dataset_root: str = ""
+    output_root: str = ""
     model_name: str = "efficientnet_b0"
     image_size: int = 384
     num_classes: int = 2
@@ -298,6 +305,7 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     model_cfg = raw.get("model", {})
     training_cfg = raw.get("training", {})
     data_cfg = raw.get("data", {})
+    output_cfg = raw.get("output", {})
     benchmark_cfg = raw.get("benchmark", {})
     hard_examples_cfg = raw.get("hard_examples", {})
     config_name = Path(config_path).name
@@ -330,6 +338,7 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
             "experiment_name": experiment_cfg.get("name", cfg.get("experiment_name", "v2_2_hard_examples")),
             "seed": experiment_cfg.get("seed", cfg.get("seed")),
             "dataset_root": data_cfg.get("dataset_root", cfg.get("dataset_root")),
+            "output_root": output_cfg.get("root", cfg.get("output_root")),
             "split_source": data_cfg.get("split_source", cfg.get("split_source")),
             "validation_split": data_cfg.get("validation_split", cfg.get("validation_split")),
             "model_name": model_cfg.get("model_name", cfg.get("model_name")),
@@ -389,6 +398,7 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         validate_v5_scope_guards({**raw, **cfg})
     config = TrainingRunConfig(
         dataset_root=str(cfg.get("dataset_root", "")),
+        output_root=str(cfg.get("output_root", "")),
         model_name=str(cfg.get("model_name", "efficientnet_b0")),
         image_size=int(cfg.get("image_size", 384)),
         num_classes=int(cfg.get("num_classes", 2)),
@@ -730,6 +740,7 @@ def run_training(
     _log(f"train_image_count={load_result.train_image_count}")
     _log(f"label_distribution={_class_counts(examples)}")
     _log_examples(examples)
+    v2_2_hard_examples = None
     if active_config.hard_examples_enabled:
         from src.data.hard_examples import HardExampleError, load_hard_examples, validate_hard_example_images
 
@@ -779,16 +790,34 @@ def run_training(
     train_counts = _class_counts(split.train)
     validation_counts = _class_counts(split.validation)
     split_disjointness = report_split_disjointness(split)
-    hard_example_report = prepare_hard_example_report(
-        hard_example_source=hard_examples_root if hard_examples_root is not None else active_config.hard_example_source,
-        summary_path=hard_example_summary_path,
-        train_image_ids=[example.image_id for example in split.train],
-        validation_image_ids=[example.image_id for example in split.validation],
-        strategy=active_config.hard_example_strategy,
-    )
+    hard_example_report = None
+    v2_2_hard_example_summary: dict[str, object] = {}
+    if active_config.hard_examples_enabled and active_config.hard_example_strategy != "oversample":
+        assert v2_2_hard_examples is not None
+        v2_2_hard_example_summary = {
+            "source_type": "v2_1_auto_triage",
+            "usage": "validated_only",
+            "hard_negatives_path": str(v2_2_hard_examples.hard_negatives_path),
+            "hard_positives_path": str(v2_2_hard_examples.hard_positives_path),
+            "uncertain_examples_path": (
+                "" if v2_2_hard_examples.uncertain_examples_path is None else str(v2_2_hard_examples.uncertain_examples_path)
+            ),
+            "hard_negative_count": v2_2_hard_examples.hard_negative_count,
+            "hard_positive_count": v2_2_hard_examples.hard_positive_count,
+            "uncertain_count": v2_2_hard_examples.uncertain_count,
+            "used_for_oversampling_count": 0,
+        }
+    else:
+        hard_example_report = prepare_hard_example_report(
+            hard_example_source=hard_examples_root if hard_examples_root is not None else active_config.hard_example_source,
+            summary_path=hard_example_summary_path,
+            train_image_ids=[example.image_id for example in split.train],
+            validation_image_ids=[example.image_id for example in split.validation],
+            strategy=active_config.hard_example_strategy,
+        )
     hard_example_weights = (
         build_hard_example_weight_map(hard_example_report, strategy=active_config.hard_example_strategy)
-        if active_config.hard_example_strategy == "oversample"
+        if hard_example_report is not None and active_config.hard_example_strategy == "oversample"
         else None
     )
     device = select_training_device(active_config.device)
@@ -798,6 +827,11 @@ def run_training(
     _log(f"validation_label_distribution={validation_counts}")
     _log(f"split_disjointness={split_disjointness}")
     _log(f"hard_example_strategy={active_config.hard_example_strategy}")
+    if active_config.hard_examples_enabled:
+        _log(f"hard_negative_weight={active_config.hard_negative_weight}")
+        _log(f"hard_positive_weight={active_config.hard_positive_weight}")
+        _log(f"uncertain_weight={active_config.uncertain_weight}")
+        _log(f"max_extra_sampling_multiplier={active_config.max_extra_sampling_multiplier}")
     _log(f"selected_device={device}")
     _log(f"model_name={'tiny_cnn' if synthetic_smoke else active_config.model_name}")
     _log(f"image_size={active_config.image_size}")
@@ -896,10 +930,10 @@ def run_training(
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
 
     assert best_state is not None and best_metrics is not None and best_threshold is not None
-    model_output = V5_MODEL_OUTPUT if active_config.v5 else V2_MODEL_OUTPUT if active_config.v2 else DEFAULT_MODEL_OUTPUT
-    metrics_output = V5_METRICS_OUTPUT if active_config.v5 else V2_METRICS_OUTPUT if active_config.v2 else DEFAULT_METRICS_OUTPUT
-    threshold_output = V5_THRESHOLD_OUTPUT if active_config.v5 else V2_THRESHOLD_OUTPUT if active_config.v2 else DEFAULT_THRESHOLD_OUTPUT
-    predictions_output = V5_PREDICTIONS_OUTPUT if active_config.v5 else V2_PREDICTIONS_OUTPUT if active_config.v2 else DEFAULT_PREDICTIONS_OUTPUT
+    model_output = _default_model_output_for_config(active_config)
+    metrics_output = _default_metrics_output_for_config(active_config)
+    threshold_output = _default_threshold_output_for_config(active_config)
+    predictions_output = _default_predictions_output_for_config(active_config)
     model_path = _resolve_output_path(output_root, model_output)
     metrics_path = _resolve_output_path(output_root, metrics_output)
     threshold_path = _resolve_output_path(output_root, threshold_output)
@@ -956,10 +990,16 @@ def run_training(
             experiment_name=active_config.experiment_name,
             hard_example_strategy=active_config.hard_example_strategy,
             imbalance_strategy=active_config.imbalance_strategy,
-            hard_example_source_used=hard_example_report.hard_example_source_used,
+            hard_example_source_used=(
+                hard_example_report.hard_example_source_used
+                if hard_example_report is not None
+                else str(v2_2_hard_example_summary.get("hard_negatives_path", ""))
+            ),
             split_disjointness={
                 **split_disjointness,
-                "hard_examples": asdict(hard_example_report),
+                "hard_examples": (
+                    asdict(hard_example_report) if hard_example_report is not None else v2_2_hard_example_summary
+                ),
             },
             selected_model_name=selected_model_name,
             fallback_model_name=active_config.fallback_model_name if active_config.v5 else "",
@@ -998,7 +1038,7 @@ def run_training(
         validate_v5_metrics_report(metrics_path)
         validate_v5_validation_predictions(predictions_path, expected_validation_ids=[example.image_id for example in split.validation])
     if active_config.v2 and v1_baseline is not None:
-        comparison_path = _resolve_output_path(output_root, V2_COMPARISON_OUTPUT)
+        comparison_path = _resolve_output_path(output_root, _default_comparison_output_for_config(active_config))
         comparison_path.parent.mkdir(parents=True, exist_ok=True)
         v2_candidate = V2CandidateResult(
             experiment_name=active_config.experiment_name,
@@ -1119,6 +1159,56 @@ def _requires_start_checkpoint(config: TrainingRunConfig) -> bool:
     return "v2b_enhanced" in config.experiment_name.lower()
 
 
+def _is_v2_2_config(config: TrainingRunConfig) -> bool:
+    return config.experiment_name == "v2_2_hard_examples"
+
+
+def _default_model_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_MODEL_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_MODEL_OUTPUT
+    if config.v2:
+        return V2_MODEL_OUTPUT
+    return DEFAULT_MODEL_OUTPUT
+
+
+def _default_metrics_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_METRICS_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_METRICS_OUTPUT
+    if config.v2:
+        return V2_METRICS_OUTPUT
+    return DEFAULT_METRICS_OUTPUT
+
+
+def _default_threshold_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_THRESHOLD_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_THRESHOLD_OUTPUT
+    if config.v2:
+        return V2_THRESHOLD_OUTPUT
+    return DEFAULT_THRESHOLD_OUTPUT
+
+
+def _default_predictions_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_PREDICTIONS_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_PREDICTIONS_OUTPUT
+    if config.v2:
+        return V2_PREDICTIONS_OUTPUT
+    return DEFAULT_PREDICTIONS_OUTPUT
+
+
+def _default_comparison_output_for_config(config: TrainingRunConfig) -> Path:
+    if _is_v2_2_config(config):
+        return V2_2_COMPARISON_OUTPUT
+    return V2_COMPARISON_OUTPUT
+
+
 def build_hard_example_weight_map(
     report: "HardExampleSourceReport",
     *,
@@ -1189,7 +1279,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Train the SPEC-005 binary classifier.")
     parser.add_argument("--config", default="configs/classifier.yaml")
     parser.add_argument("--dataset-root", default=None)
-    parser.add_argument("--output-root", default="outputs")
+    parser.add_argument("--output-root", default=None)
     parser.add_argument("--synthetic-smoke", action="store_true")
     parser.add_argument("--epochs", "--max-epochs", dest="epochs", type=int, default=None)
     parser.add_argument("--max-train-samples", type=int, default=None)
@@ -1216,9 +1306,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     dataset_root = args.dataset_root or config.dataset_root
     if not dataset_root:
         parser.error("--dataset-root is required unless data.dataset_root is configured")
+    output_root = args.output_root or config.output_root or "outputs"
     result = run_training(
         dataset_root=dataset_root,
-        output_root=args.output_root,
+        output_root=output_root,
         config=config,
         synthetic_smoke=args.synthetic_smoke,
         epochs=args.epochs,

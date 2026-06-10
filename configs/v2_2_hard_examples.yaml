@@ -7,6 +7,9 @@ data:
   split_source: v2b_compatible
   validation_split: 0.2
 
+output:
+  root: outputs/kaggle_v2_2/v2_2_hard_examples
+
 model:
   model_name: efficientnet_b1
   image_size: 384
