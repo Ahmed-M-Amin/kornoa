@@ -56,7 +56,7 @@ V5_PREDICTIONS_OUTPUT = V5_OUTPUT_ROOT / "predictions/val_classifier_predictions
 V5_TEST_PREDICTIONS_OUTPUT = V5_OUTPUT_ROOT / "predictions/test_classifier_predictions.csv"
 V5_SUBMISSION_OUTPUT = V5_OUTPUT_ROOT / "submissions/submission_v5.csv"
 V5_BENCHMARK_OUTPUT = V5_OUTPUT_ROOT / "benchmarks/v5_inference_benchmark.json"
-V2_ALLOWED_HARD_EXAMPLE_STRATEGIES = {"none", "analysis_only", "oversample"}
+V2_ALLOWED_HARD_EXAMPLE_STRATEGIES = {"none", "analysis_only", "oversample", "conservative_loss_weighting"}
 V2_ALLOWED_BACKBONES = {"efficientnet_b0", "efficientnet_b1", "efficientnet_b2", "convnext_tiny", "tiny_cnn"}
 V5_ALLOWED_HARD_EXAMPLE_STRATEGIES = {"analysis_only", "oversample"}
 V2_FORBIDDEN_FLAGS = {
@@ -73,6 +73,7 @@ V2_FORBIDDEN_FLAGS = {
     "hybrid_inference",
     "hybrid",
 }
+CONSERVATIVE_HARD_EXAMPLE_STRATEGY = "conservative_loss_weighting"
 
 class TrainingValidationError(ValueError):
     """Raised when classifier training inputs are invalid."""
@@ -200,6 +201,7 @@ class ClassifierMetricsReport:
     artifact_paths: dict[str, str]
     experiment_name: str = "v1_effnet_b0"
     hard_example_strategy: str = "none"
+    hard_example_weighting: dict[str, object] = field(default_factory=dict)
     imbalance_strategy: str = "weighted_bce"
     hard_example_source_used: str = ""
     split_disjointness: dict[str, object] = field(default_factory=dict)
@@ -271,17 +273,19 @@ class ClassifierTrainingDataset(Dataset):
         seed: Optional[int] = None,
         target_size: tuple[int, int] = (384, 384),
         augmentation_recipe: str = "v1",
+        sample_weights: Optional[dict[str, float]] = None,
     ) -> None:
         self.examples = list(examples)
         self.split_name = split_name
         self.seed = seed
         self.target_size = target_size
         self.augmentation_recipe = augmentation_recipe
+        self.sample_weights = sample_weights or {}
 
     def __len__(self) -> int:
         return len(self.examples)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str] | tuple[torch.Tensor, torch.Tensor, str, torch.Tensor]:
         example = self.examples[index]
         sample_seed = None if self.seed is None else self.seed + index
         array = example.load_preprocessed(
@@ -292,6 +296,9 @@ class ClassifierTrainingDataset(Dataset):
         )
         inputs = torch.from_numpy(array).to(dtype=torch.float32)
         label = torch.tensor(float(example.label), dtype=torch.float32)
+        if self.sample_weights:
+            weight = torch.tensor(float(self.sample_weights.get(example.image_id, 1.0)), dtype=torch.float32)
+            return inputs, label, example.image_id, weight
         return inputs, label, example.image_id
 
 
@@ -352,7 +359,10 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
             "imbalance_strategy": training_cfg.get("loss", cfg.get("imbalance_strategy")),
             "weighted_sampler": training_cfg.get("weighted_sampler", cfg.get("weighted_sampler")),
             "augmentation_recipe": training_cfg.get("augmentation_recipe", cfg.get("augmentation_recipe")),
-            "hard_example_strategy": training_cfg.get("hard_example_strategy", cfg.get("hard_example_strategy", "analysis_only")),
+            "hard_example_strategy": hard_examples_cfg.get(
+                "strategy",
+                training_cfg.get("hard_example_strategy", cfg.get("hard_example_strategy", "analysis_only")),
+            ),
             "num_workers": training_cfg.get("num_workers", cfg.get("num_workers")),
             "pin_memory": training_cfg.get("pin_memory", cfg.get("pin_memory")),
             "device": training_cfg.get("device", cfg.get("device")),
@@ -419,7 +429,7 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         experiment_name=str(cfg.get("experiment_name", "v2a_effnet_b0_recipe" if is_v2 else "v1_effnet_b0")),
         imbalance_strategy=str(cfg.get("imbalance_strategy", "focal_loss_weighted_sampler" if is_v2 else "weighted_bce")),
         augmentation_recipe=str(cfg.get("augmentation_recipe", "v2_safe" if is_v2 else "v1")),
-        hard_example_strategy=str(cfg.get("hard_example_strategy", "analysis_only" if is_v2 else "none")),
+        hard_example_strategy=str(hard_examples_cfg.get("strategy", cfg.get("hard_example_strategy", "analysis_only" if is_v2 else "none"))),
         hard_example_source=str(cfg.get("hard_example_source", "auto")),
         weighted_sampler=bool(cfg.get("weighted_sampler", is_v2)),
         focal_alpha=float(cfg.get("focal_alpha", 0.25)),
@@ -488,10 +498,12 @@ def _validate_common_training_config(config: TrainingRunConfig) -> None:
             raise TrainingValidationError("V2.2 hard_examples.hard_negatives is required when enabled")
         if not config.hard_positives_path:
             raise TrainingValidationError("V2.2 hard_examples.hard_positives is required when enabled")
-        if config.hard_negative_weight > 1.5 or config.hard_positive_weight > 1.5:
-            raise TrainingValidationError("V2.2 hard-example weights must remain conservative")
+        if config.hard_negative_weight > 2.0 or config.hard_positive_weight > 2.0 or config.uncertain_weight > 2.0:
+            raise TrainingValidationError("V2.2 hard-example weights must remain conservative and <= 2.0")
         if config.max_extra_sampling_multiplier > 2.0:
             raise TrainingValidationError("V2.2 max_extra_sampling_multiplier must be <= 2.0")
+    if config.hard_example_strategy == CONSERVATIVE_HARD_EXAMPLE_STRATEGY and config.imbalance_strategy != "bce":
+        raise TrainingValidationError("V2.2 conservative_loss_weighting requires bce loss, not focal loss")
 
 
 def _validate_v2_training_config(config: TrainingRunConfig) -> None:
@@ -504,7 +516,7 @@ def _validate_v2_training_config(config: TrainingRunConfig) -> None:
     if config.num_classes != 2:
         raise TrainingValidationError("classifier.num_classes must be 2")
     if config.hard_example_strategy not in V2_ALLOWED_HARD_EXAMPLE_STRATEGIES:
-        raise TrainingValidationError("V2 hard_example_strategy must be none, analysis_only, or oversample")
+        raise TrainingValidationError("V2 hard_example_strategy must be none, analysis_only, or oversample, or conservative_loss_weighting")
     if not config.hard_example_source:
         raise TrainingValidationError("V2 hard_example_source must be a path or auto")
     if config.augmentation_recipe not in {"v1", "v2_safe", "mild_safe"}:
@@ -659,6 +671,7 @@ def build_training_dataloaders(
     device: torch.device,
     synthetic_smoke: bool = False,
     hard_example_weights: Optional[dict[str, float]] = None,
+    sample_loss_weights: Optional[dict[str, float]] = None,
 ) -> TrainingDataLoaders:
     """Build train/validation DataLoaders without preloading the full dataset."""
 
@@ -671,6 +684,7 @@ def build_training_dataloaders(
         seed=config.seed if synthetic_smoke else config.seed,
         target_size=(config.image_size, config.image_size),
         augmentation_recipe=config.augmentation_recipe,
+        sample_weights=sample_loss_weights,
     )
     validation_dataset = ClassifierTrainingDataset(
         split.validation,
@@ -786,17 +800,37 @@ def run_training(
             split,
             hard_example_image_ids=initial_hard_example_report.validation_excluded_image_ids,
         )
+    elif (
+        active_config.hard_examples_enabled
+        and active_config.hard_example_strategy == CONSERVATIVE_HARD_EXAMPLE_STRATEGY
+    ):
+        assert v2_2_hard_examples is not None
+        split = exclude_hard_examples_from_validation(
+            split,
+            hard_example_image_ids=v2_2_hard_examples.strong_hard_example_image_ids,
+        )
 
     train_counts = _class_counts(split.train)
     validation_counts = _class_counts(split.validation)
     split_disjointness = report_split_disjointness(split)
     hard_example_report = None
     v2_2_hard_example_summary: dict[str, object] = {}
+    sample_loss_weights: dict[str, float] = {}
     if active_config.hard_examples_enabled and active_config.hard_example_strategy != "oversample":
         assert v2_2_hard_examples is not None
+        if active_config.hard_example_strategy == CONSERVATIVE_HARD_EXAMPLE_STRATEGY:
+            sample_loss_weights = build_conservative_hard_example_weight_map(
+                v2_2_hard_examples,
+                train_image_ids=[example.image_id for example in split.train],
+                config=active_config,
+            )
         v2_2_hard_example_summary = {
             "source_type": "v2_1_auto_triage",
-            "usage": "validated_only",
+            "usage": (
+                "conservative_loss_weighting"
+                if active_config.hard_example_strategy == CONSERVATIVE_HARD_EXAMPLE_STRATEGY
+                else "validated_only"
+            ),
             "hard_negatives_path": str(v2_2_hard_examples.hard_negatives_path),
             "hard_positives_path": str(v2_2_hard_examples.hard_positives_path),
             "uncertain_examples_path": (
@@ -806,6 +840,7 @@ def run_training(
             "hard_positive_count": v2_2_hard_examples.hard_positive_count,
             "uncertain_count": v2_2_hard_examples.uncertain_count,
             "used_for_oversampling_count": 0,
+            "weighted_training_samples": len(sample_loss_weights),
         }
     else:
         hard_example_report = prepare_hard_example_report(
@@ -832,6 +867,7 @@ def run_training(
         _log(f"hard_positive_weight={active_config.hard_positive_weight}")
         _log(f"uncertain_weight={active_config.uncertain_weight}")
         _log(f"max_extra_sampling_multiplier={active_config.max_extra_sampling_multiplier}")
+        _log(f"weighted_training_samples={len(sample_loss_weights)}")
     _log(f"selected_device={device}")
     _log(f"model_name={'tiny_cnn' if synthetic_smoke else active_config.model_name}")
     _log(f"image_size={active_config.image_size}")
@@ -857,7 +893,7 @@ def run_training(
         ).to(device)
     load_start_checkpoint_if_configured(model, active_config, device)
     if active_config.imbalance_strategy == "bce":
-        loss_fn = nn.BCEWithLogitsLoss().to(device)
+        loss_fn = nn.BCEWithLogitsLoss(reduction="none" if sample_loss_weights else "mean").to(device)
         pos_weight = 1.0
     elif active_config.imbalance_strategy.startswith("focal"):
         loss_fn = create_binary_focal_loss(
@@ -884,6 +920,7 @@ def run_training(
         device=device,
         synthetic_smoke=synthetic_smoke,
         hard_example_weights=hard_example_weights,
+        sample_loss_weights=sample_loss_weights if sample_loss_weights else None,
     )
     _log(f"DataLoader created train_batches={len(loaders.train)} validation_batches={len(loaders.validation)}")
 
@@ -894,14 +931,17 @@ def run_training(
     best_epoch = 0
     for epoch in range(1, active_config.epochs + 1):
         model.train()
-        for batch_index, (batch_inputs, batch_labels, _image_ids) in enumerate(loaders.train, start=1):
+        for batch_index, batch in enumerate(loaders.train, start=1):
             if active_config.limit_train_batches is not None and batch_index > active_config.limit_train_batches:
                 break
+            batch_inputs, batch_labels, _image_ids, batch_weights = _unpack_training_batch(batch)
             batch_inputs = batch_inputs.to(device, non_blocking=non_blocking)
             batch_labels = batch_labels.to(device, non_blocking=non_blocking)
+            batch_weights = None if batch_weights is None else batch_weights.to(device, non_blocking=non_blocking)
             optimizer.zero_grad()
             logits = model(batch_inputs)
-            loss = loss_fn(logits, batch_labels)
+            loss_values = loss_fn(logits, batch_labels)
+            loss = _reduce_training_loss(loss_values, batch_weights)
             loss.backward()
             optimizer.step()
             if batch_index == 1 or batch_index % active_config.log_every_n_batches == 0:
@@ -989,6 +1029,19 @@ def run_training(
             },
             experiment_name=active_config.experiment_name,
             hard_example_strategy=active_config.hard_example_strategy,
+            hard_example_weighting={
+                "hard_example_strategy": active_config.hard_example_strategy,
+                "hard_negative_count": int(v2_2_hard_example_summary.get("hard_negative_count", 0)),
+                "hard_positive_count": int(v2_2_hard_example_summary.get("hard_positive_count", 0)),
+                "uncertain_count": int(v2_2_hard_example_summary.get("uncertain_count", 0)),
+                "hard_negative_weight": active_config.hard_negative_weight,
+                "hard_positive_weight": active_config.hard_positive_weight,
+                "uncertain_weight": active_config.uncertain_weight,
+                "weighted_training_samples": len(sample_loss_weights),
+                "outputs_isolated_under": str(output_root),
+                "used_test_labels": False,
+                "submission_created": False,
+            },
             imbalance_strategy=active_config.imbalance_strategy,
             hard_example_source_used=(
                 hard_example_report.hard_example_source_used
@@ -1222,6 +1275,27 @@ def build_hard_example_weight_map(
     return {image_id: oversample_multiplier for image_id in report.oversampled_image_ids}
 
 
+def build_conservative_hard_example_weight_map(
+    report: object,
+    *,
+    train_image_ids: Sequence[str],
+    config: TrainingRunConfig,
+) -> dict[str, float]:
+    """Return conservative per-image loss weights for V2.2 strong hard examples."""
+
+    if config.hard_example_strategy != CONSERVATIVE_HARD_EXAMPLE_STRATEGY:
+        return {}
+    train_ids = set(train_image_ids)
+    weights: dict[str, float] = {}
+    for image_id in getattr(report, "hard_negative_image_ids", []):
+        if image_id in train_ids:
+            weights[image_id] = float(config.hard_negative_weight)
+    for image_id in getattr(report, "hard_positive_image_ids", []):
+        if image_id in train_ids:
+            weights[image_id] = float(config.hard_positive_weight)
+    return weights
+
+
 def report_split_disjointness(split: SplitAssignment) -> dict[str, object]:
     """Report train/validation image-ID disjointness for leakage checks."""
 
@@ -1445,6 +1519,22 @@ def _collect_validation_predictions(
             probabilities.extend(torch.sigmoid(logits).cpu().numpy().astype(float).tolist())
             labels.extend(batch_labels.cpu().numpy().astype(int).tolist())
     return labels, probabilities
+
+
+def _unpack_training_batch(
+    batch: Sequence[object],
+) -> tuple[torch.Tensor, torch.Tensor, Sequence[str], Optional[torch.Tensor]]:
+    if len(batch) == 4:
+        batch_inputs, batch_labels, image_ids, batch_weights = batch
+        return batch_inputs, batch_labels, image_ids, batch_weights
+    batch_inputs, batch_labels, image_ids = batch
+    return batch_inputs, batch_labels, image_ids, None
+
+
+def _reduce_training_loss(loss_values: torch.Tensor, batch_weights: Optional[torch.Tensor]) -> torch.Tensor:
+    if batch_weights is None:
+        return loss_values.mean() if loss_values.ndim > 0 else loss_values
+    return (loss_values * batch_weights).mean()
 
 
 def _build_predictions(
