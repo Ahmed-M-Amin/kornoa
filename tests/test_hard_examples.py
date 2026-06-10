@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -115,14 +116,15 @@ def test_v2_2_config_is_safe_and_uses_binary_f1_contract():
     assert hard_examples["hard_negatives"]
     assert hard_examples["hard_positives"]
     assert hard_examples["uncertain_examples"]
-    assert hard_examples["hard_negative_weight"] <= 1.5
-    assert hard_examples["hard_positive_weight"] <= 1.5
+    assert hard_examples["strategy"] == "conservative_loss_weighting"
+    assert 1.25 <= hard_examples["hard_negative_weight"] <= 1.5
+    assert 1.25 <= hard_examples["hard_positive_weight"] <= 1.5
     assert hard_examples["max_extra_sampling_multiplier"] <= 2.0
     assert payload["safety"]["generate_submission"] is False
     assert payload["safety"]["allow_test_labels"] is False
     assert metrics["positive_class"] == 1
     assert metrics["zero_division"] == 0
-    assert payload["training"]["hard_example_strategy"] == "analysis_only"
+    assert payload["training"]["hard_example_strategy"] == "conservative_loss_weighting"
 
 
 def test_training_cli_accepts_v2_2_smoke_aliases_without_starting_real_training(monkeypatch):
@@ -164,6 +166,7 @@ def test_training_cli_accepts_v2_2_smoke_aliases_without_starting_real_training(
     assert captured["config"].limit_train_batches == 10
     assert captured["config"].limit_val_batches == 5
     assert captured["config"].hard_examples_enabled is True
+    assert captured["config"].hard_example_strategy == "conservative_loss_weighting"
     assert captured["dataset_root"] == "1st-krones-vision-ai-challenge"
     assert captured["output_root"] == "outputs/kaggle_v2_2/v2_2_hard_examples"
 
@@ -193,3 +196,78 @@ def test_v2_2_output_paths_are_isolated_from_old_v2_outputs():
     assert _resolve_output_path(output_root, V2_2_PREDICTIONS_OUTPUT) == output_root / "predictions/val_classifier_predictions.csv"
     assert "kaggle_v2_2" in str(_default_model_output_for_config(config))
     assert "kaggle_v2/models" not in str(_default_model_output_for_config(config)).replace("\\", "/")
+
+
+def test_conservative_weight_map_weights_only_strong_hard_examples(tmp_path):
+    from src.data.hard_examples import load_hard_examples
+    from src.training.train_classifier import (
+        TrainingRunConfig,
+        build_conservative_hard_example_weight_map,
+    )
+
+    paths = _write_sources(tmp_path)
+    report = load_hard_examples(**paths)
+    config = TrainingRunConfig(
+        hard_example_strategy="conservative_loss_weighting",
+        hard_negative_weight=1.35,
+        hard_positive_weight=1.4,
+        uncertain_weight=1.0,
+    )
+
+    weights = build_conservative_hard_example_weight_map(
+        report,
+        train_image_ids=["fp_a.png", "fn_a.png", "uncertain_a.png", "easy.png"],
+        config=config,
+    )
+
+    assert weights == {"fp_a.png": 1.35, "fn_a.png": 1.4}
+    assert weights.get("uncertain_a.png", 1.0) == 1.0
+    assert weights.get("easy.png", 1.0) == 1.0
+
+
+def test_conservative_weighted_dataset_returns_per_sample_weights():
+    from src.training.train_classifier import (
+        ClassifierTrainingDataset,
+    )
+
+    class _Example:
+        def __init__(self, image_id: str, label: int) -> None:
+            self.image_id = image_id
+            self.label = label
+
+        def load_preprocessed(self, **_: object) -> np.ndarray:
+            return np.zeros((3, 384, 384), dtype=np.float32)
+
+    dataset = ClassifierTrainingDataset(
+        [
+            _Example("hard.png", 1),
+            _Example("easy.png", 0),
+        ],
+        split_name="train",
+        sample_weights={"hard.png": 1.35},
+    )
+
+    hard = dataset[0]
+    easy = dataset[1]
+
+    assert len(hard) == 4
+    assert hard[3].item() == pytest.approx(1.35)
+    assert easy[3].item() == pytest.approx(1.0)
+
+
+def test_v2_2_config_rejects_aggressive_hard_example_weights():
+    from src.training.train_classifier import TrainingRunConfig, TrainingValidationError, _validate_training_config
+
+    config = TrainingRunConfig(
+        v2=True,
+        experiment_name="v2_2_hard_examples",
+        hard_examples_enabled=True,
+        hard_example_strategy="conservative_loss_weighting",
+        hard_negatives_path="hn.csv",
+        hard_positives_path="hp.csv",
+        hard_negative_weight=2.1,
+        hard_positive_weight=1.35,
+    )
+
+    with pytest.raises(TrainingValidationError, match="weights"):
+        _validate_training_config(config)

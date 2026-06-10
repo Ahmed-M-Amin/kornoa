@@ -25,7 +25,7 @@ training:
   weighted_sampler: false
   focal_loss: false
   augmentation_recipe: mild_safe
-  hard_example_strategy: analysis_only
+  hard_example_strategy: conservative_loss_weighting
   num_workers: 0
   pin_memory: false
   device: auto
@@ -36,13 +36,14 @@ training:
 
 hard_examples:
   enabled: true
+  strategy: conservative_loss_weighting
   hard_negatives: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_candidate_hard_negatives_all.csv
   hard_positives: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_candidate_hard_positives_all.csv
   uncertain_examples: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_uncertain_examples_all.csv
-  hard_negative_weight: 1.5
-  hard_positive_weight: 1.5
+  hard_negative_weight: 1.35
+  hard_positive_weight: 1.35
   uncertain_weight: 1.0
-  max_extra_sampling_multiplier: 2.0
+  max_extra_sampling_multiplier: 1.5
 
 metrics:
   validation_f1: binary

@@ -40,7 +40,7 @@ Definitions:
 
 The visual cause tags are automatic suggestions only. They are not human ground truth.
 
-Current hard-example strategy is explicitly `analysis_only`: files are validated, counts are logged, and train-image availability is checked before training starts, but no active oversampling/reweighting is applied yet. Conservative sampler integration is a separate future task and must be approved before real V2.2 training.
+Current hard-example strategy is explicitly `conservative_loss_weighting`: files are validated, counts are logged, train-image availability is checked before training starts, and deduplicated hard-negative/hard-positive training samples receive a mild per-sample loss weight. Uncertain examples remain weight `1.0`; no physical row duplication, focal loss, or aggressive oversampling is used.
 
 ## Safety Boundaries
 
