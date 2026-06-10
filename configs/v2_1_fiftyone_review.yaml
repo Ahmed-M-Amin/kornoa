@@ -1,0 +1,8 @@
+input_csv: outputs/analysis/v2_1_error_intelligence/manual_review/manual_review_prefilled.csv
+train_images_dir: 1st-krones-vision-ai-challenge/train_images
+dataset_name: krones_v2_1_error_review
+output_dir: outputs/analysis/v2_1_error_intelligence/fiftyone_review
+overwrite_dataset: true
+allow_test_labels: false
+generate_submission: false
+train_model: false

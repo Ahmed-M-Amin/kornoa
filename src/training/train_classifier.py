@@ -42,6 +42,12 @@ V2_METRICS_OUTPUT = V2_OUTPUT_ROOT / "reports/classifier_metrics.json"
 V2_THRESHOLD_OUTPUT = V2_OUTPUT_ROOT / "reports/best_threshold.json"
 V2_PREDICTIONS_OUTPUT = V2_OUTPUT_ROOT / "predictions/val_classifier_predictions.csv"
 V2_COMPARISON_OUTPUT = V2_OUTPUT_ROOT / "reports/v1_vs_v2_comparison.json"
+V2_2_OUTPUT_ROOT = Path("outputs/kaggle_v2_2/v2_2_hard_examples")
+V2_2_MODEL_OUTPUT = V2_2_OUTPUT_ROOT / "models/classifier_best.pth"
+V2_2_METRICS_OUTPUT = V2_2_OUTPUT_ROOT / "reports/classifier_metrics.json"
+V2_2_THRESHOLD_OUTPUT = V2_2_OUTPUT_ROOT / "reports/best_threshold.json"
+V2_2_PREDICTIONS_OUTPUT = V2_2_OUTPUT_ROOT / "predictions/val_classifier_predictions.csv"
+V2_2_COMPARISON_OUTPUT = V2_2_OUTPUT_ROOT / "reports/v1_vs_v2_comparison.json"
 V5_OUTPUT_ROOT = Path("outputs/kaggle_v5/v5_strong_classifier")
 V5_MODEL_OUTPUT = V5_OUTPUT_ROOT / "models/classifier_best.pth"
 V5_METRICS_OUTPUT = V5_OUTPUT_ROOT / "reports/classifier_metrics.json"
@@ -117,6 +123,8 @@ class TrainingExampleLoadResult:
 
 @dataclass(frozen=True)
 class TrainingRunConfig:
+    dataset_root: str = ""
+    output_root: str = ""
     model_name: str = "efficientnet_b0"
     image_size: int = 384
     num_classes: int = 2
@@ -131,6 +139,8 @@ class TrainingRunConfig:
     device: str = "auto"
     max_train_samples: Optional[int] = None
     max_val_samples: Optional[int] = None
+    limit_train_batches: Optional[int] = None
+    limit_val_batches: Optional[int] = None
     log_every_n_batches: int = 25
     experiment_name: str = "v1_effnet_b0"
     imbalance_strategy: str = "weighted_bce"
@@ -153,6 +163,14 @@ class TrainingRunConfig:
     v2b_public_score: float = 0.92121
     v2b_average_time_per_image: Optional[float] = None
     public_score_decision: str = "analysis_only_pending_manual_review"
+    hard_examples_enabled: bool = False
+    hard_negatives_path: str = ""
+    hard_positives_path: str = ""
+    uncertain_examples_path: str = ""
+    hard_negative_weight: float = 1.5
+    hard_positive_weight: float = 1.5
+    uncertain_weight: float = 1.0
+    max_extra_sampling_multiplier: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -287,12 +305,15 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     model_cfg = raw.get("model", {})
     training_cfg = raw.get("training", {})
     data_cfg = raw.get("data", {})
+    output_cfg = raw.get("output", {})
     benchmark_cfg = raw.get("benchmark", {})
+    hard_examples_cfg = raw.get("hard_examples", {})
     config_name = Path(config_path).name
     is_v5 = bool(cfg.get("v5", False) or raw.get("v5", False) or "v5_strong_classifier" in config_name)
     is_v1r = bool("v1r_repaired_baseline" in Path(config_path).name or raw.get("v1r", False))
     is_v5b = bool("v5b_safe_finetune" in Path(config_path).name or raw.get("v5b", False))
     is_v2b_enhanced = bool("v2b_enhanced" in config_name)
+    is_v2_2 = bool("v2_2_hard_examples" in config_name or raw.get("v2_2", False))
     if is_v5:
         cfg = {
             **cfg,
@@ -309,6 +330,32 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
             "split_source": data_cfg.get("split_source", cfg.get("split_source")),
             "speed_ceiling_multiplier": benchmark_cfg.get("speed_ceiling_multiplier", cfg.get("speed_ceiling_multiplier")),
             "v2b_average_time_per_image": benchmark_cfg.get("v2b_average_time_per_image", cfg.get("v2b_average_time_per_image")),
+        }
+    elif is_v2_2:
+        cfg = {
+            **cfg,
+            "v2": True,
+            "experiment_name": experiment_cfg.get("name", cfg.get("experiment_name", "v2_2_hard_examples")),
+            "seed": experiment_cfg.get("seed", cfg.get("seed")),
+            "dataset_root": data_cfg.get("dataset_root", cfg.get("dataset_root")),
+            "output_root": output_cfg.get("root", cfg.get("output_root")),
+            "split_source": data_cfg.get("split_source", cfg.get("split_source")),
+            "validation_split": data_cfg.get("validation_split", cfg.get("validation_split")),
+            "model_name": model_cfg.get("model_name", cfg.get("model_name")),
+            "image_size": model_cfg.get("image_size", cfg.get("image_size")),
+            "num_classes": model_cfg.get("num_classes", cfg.get("num_classes")),
+            "start_checkpoint": model_cfg.get("start_checkpoint", cfg.get("start_checkpoint")),
+            "epochs": training_cfg.get("epochs", cfg.get("epochs")),
+            "batch_size": training_cfg.get("batch_size", cfg.get("batch_size")),
+            "learning_rate": training_cfg.get("learning_rate", cfg.get("learning_rate")),
+            "weight_decay": training_cfg.get("weight_decay", cfg.get("weight_decay")),
+            "imbalance_strategy": training_cfg.get("loss", cfg.get("imbalance_strategy")),
+            "weighted_sampler": training_cfg.get("weighted_sampler", cfg.get("weighted_sampler")),
+            "augmentation_recipe": training_cfg.get("augmentation_recipe", cfg.get("augmentation_recipe")),
+            "hard_example_strategy": training_cfg.get("hard_example_strategy", cfg.get("hard_example_strategy", "analysis_only")),
+            "num_workers": training_cfg.get("num_workers", cfg.get("num_workers")),
+            "pin_memory": training_cfg.get("pin_memory", cfg.get("pin_memory")),
+            "device": training_cfg.get("device", cfg.get("device")),
         }
     elif is_v5b or is_v2b_enhanced:
         default_experiment = "v2b_enhanced_448" if "448" in config_name else "v2b_enhanced_384"
@@ -350,6 +397,8 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     if is_v5:
         validate_v5_scope_guards({**raw, **cfg})
     config = TrainingRunConfig(
+        dataset_root=str(cfg.get("dataset_root", "")),
+        output_root=str(cfg.get("output_root", "")),
         model_name=str(cfg.get("model_name", "efficientnet_b0")),
         image_size=int(cfg.get("image_size", 384)),
         num_classes=int(cfg.get("num_classes", 2)),
@@ -364,6 +413,8 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         device=str(cfg.get("device", "auto")),
         max_train_samples=_optional_positive_int(cfg.get("max_train_samples"), "classifier.max_train_samples"),
         max_val_samples=_optional_positive_int(cfg.get("max_val_samples"), "classifier.max_val_samples"),
+        limit_train_batches=_optional_positive_int(cfg.get("limit_train_batches"), "classifier.limit_train_batches"),
+        limit_val_batches=_optional_positive_int(cfg.get("limit_val_batches"), "classifier.limit_val_batches"),
         log_every_n_batches=int(cfg.get("log_every_n_batches", 25)),
         experiment_name=str(cfg.get("experiment_name", "v2a_effnet_b0_recipe" if is_v2 else "v1_effnet_b0")),
         imbalance_strategy=str(cfg.get("imbalance_strategy", "focal_loss_weighted_sampler" if is_v2 else "weighted_bce")),
@@ -390,12 +441,21 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
             else float(cfg.get("v2b_average_time_per_image"))
         ),
         public_score_decision=str(cfg.get("public_score_decision", "analysis_only_pending_manual_review")),
+        hard_examples_enabled=bool(hard_examples_cfg.get("enabled", False)),
+        hard_negatives_path=str(hard_examples_cfg.get("hard_negatives", "")),
+        hard_positives_path=str(hard_examples_cfg.get("hard_positives", "")),
+        uncertain_examples_path=str(hard_examples_cfg.get("uncertain_examples", "")),
+        hard_negative_weight=float(hard_examples_cfg.get("hard_negative_weight", 1.5)),
+        hard_positive_weight=float(hard_examples_cfg.get("hard_positive_weight", 1.5)),
+        uncertain_weight=float(hard_examples_cfg.get("uncertain_weight", 1.0)),
+        max_extra_sampling_multiplier=float(hard_examples_cfg.get("max_extra_sampling_multiplier", 2.0)),
     )
     _validate_training_config(config)
     return config
 
 
 def _validate_training_config(config: TrainingRunConfig) -> None:
+    _validate_common_training_config(config)
     if config.v5:
         _validate_v5_training_config(config)
         return
@@ -416,6 +476,22 @@ def _validate_training_config(config: TrainingRunConfig) -> None:
         raise TrainingValidationError("classifier.log_every_n_batches must be at least 1")
     if config.epochs < 1:
         raise TrainingValidationError("classifier.epochs must be at least 1")
+
+
+def _validate_common_training_config(config: TrainingRunConfig) -> None:
+    if config.limit_train_batches is not None and config.limit_train_batches < 1:
+        raise TrainingValidationError("classifier.limit_train_batches must be at least 1 when set")
+    if config.limit_val_batches is not None and config.limit_val_batches < 1:
+        raise TrainingValidationError("classifier.limit_val_batches must be at least 1 when set")
+    if config.hard_examples_enabled:
+        if not config.hard_negatives_path:
+            raise TrainingValidationError("V2.2 hard_examples.hard_negatives is required when enabled")
+        if not config.hard_positives_path:
+            raise TrainingValidationError("V2.2 hard_examples.hard_positives is required when enabled")
+        if config.hard_negative_weight > 1.5 or config.hard_positive_weight > 1.5:
+            raise TrainingValidationError("V2.2 hard-example weights must remain conservative")
+        if config.max_extra_sampling_multiplier > 2.0:
+            raise TrainingValidationError("V2.2 max_extra_sampling_multiplier must be <= 2.0")
 
 
 def _validate_v2_training_config(config: TrainingRunConfig) -> None:
@@ -664,6 +740,30 @@ def run_training(
     _log(f"train_image_count={load_result.train_image_count}")
     _log(f"label_distribution={_class_counts(examples)}")
     _log_examples(examples)
+    v2_2_hard_examples = None
+    if active_config.hard_examples_enabled:
+        from src.data.hard_examples import HardExampleError, load_hard_examples, validate_hard_example_images
+
+        try:
+            v2_2_hard_examples = load_hard_examples(
+                hard_negatives=active_config.hard_negatives_path,
+                hard_positives=active_config.hard_positives_path,
+                uncertain_examples=active_config.uncertain_examples_path,
+            )
+            validate_hard_example_images(
+                v2_2_hard_examples,
+                available_image_ids=[example.image_id for example in examples],
+                fail_on_missing=True,
+            )
+        except HardExampleError as exc:
+            raise TrainingValidationError(str(exc)) from exc
+        _log(f"hard_negative_file_found={Path(active_config.hard_negatives_path).exists()}")
+        _log(f"hard_positive_file_found={Path(active_config.hard_positives_path).exists()}")
+        _log(f"hard_negative_count={v2_2_hard_examples.hard_negative_count}")
+        _log(f"hard_positive_count={v2_2_hard_examples.hard_positive_count}")
+        _log(f"uncertain_count={v2_2_hard_examples.uncertain_count}")
+        _log(f"first_5_hard_negative_image_ids={v2_2_hard_examples.hard_negative_image_ids[:5]}")
+        _log(f"first_5_hard_positive_image_ids={v2_2_hard_examples.hard_positive_image_ids[:5]}")
 
     split = make_stratified_split(
         examples,
@@ -690,16 +790,34 @@ def run_training(
     train_counts = _class_counts(split.train)
     validation_counts = _class_counts(split.validation)
     split_disjointness = report_split_disjointness(split)
-    hard_example_report = prepare_hard_example_report(
-        hard_example_source=hard_examples_root if hard_examples_root is not None else active_config.hard_example_source,
-        summary_path=hard_example_summary_path,
-        train_image_ids=[example.image_id for example in split.train],
-        validation_image_ids=[example.image_id for example in split.validation],
-        strategy=active_config.hard_example_strategy,
-    )
+    hard_example_report = None
+    v2_2_hard_example_summary: dict[str, object] = {}
+    if active_config.hard_examples_enabled and active_config.hard_example_strategy != "oversample":
+        assert v2_2_hard_examples is not None
+        v2_2_hard_example_summary = {
+            "source_type": "v2_1_auto_triage",
+            "usage": "validated_only",
+            "hard_negatives_path": str(v2_2_hard_examples.hard_negatives_path),
+            "hard_positives_path": str(v2_2_hard_examples.hard_positives_path),
+            "uncertain_examples_path": (
+                "" if v2_2_hard_examples.uncertain_examples_path is None else str(v2_2_hard_examples.uncertain_examples_path)
+            ),
+            "hard_negative_count": v2_2_hard_examples.hard_negative_count,
+            "hard_positive_count": v2_2_hard_examples.hard_positive_count,
+            "uncertain_count": v2_2_hard_examples.uncertain_count,
+            "used_for_oversampling_count": 0,
+        }
+    else:
+        hard_example_report = prepare_hard_example_report(
+            hard_example_source=hard_examples_root if hard_examples_root is not None else active_config.hard_example_source,
+            summary_path=hard_example_summary_path,
+            train_image_ids=[example.image_id for example in split.train],
+            validation_image_ids=[example.image_id for example in split.validation],
+            strategy=active_config.hard_example_strategy,
+        )
     hard_example_weights = (
         build_hard_example_weight_map(hard_example_report, strategy=active_config.hard_example_strategy)
-        if active_config.hard_example_strategy == "oversample"
+        if hard_example_report is not None and active_config.hard_example_strategy == "oversample"
         else None
     )
     device = select_training_device(active_config.device)
@@ -709,6 +827,11 @@ def run_training(
     _log(f"validation_label_distribution={validation_counts}")
     _log(f"split_disjointness={split_disjointness}")
     _log(f"hard_example_strategy={active_config.hard_example_strategy}")
+    if active_config.hard_examples_enabled:
+        _log(f"hard_negative_weight={active_config.hard_negative_weight}")
+        _log(f"hard_positive_weight={active_config.hard_positive_weight}")
+        _log(f"uncertain_weight={active_config.uncertain_weight}")
+        _log(f"max_extra_sampling_multiplier={active_config.max_extra_sampling_multiplier}")
     _log(f"selected_device={device}")
     _log(f"model_name={'tiny_cnn' if synthetic_smoke else active_config.model_name}")
     _log(f"image_size={active_config.image_size}")
@@ -772,6 +895,8 @@ def run_training(
     for epoch in range(1, active_config.epochs + 1):
         model.train()
         for batch_index, (batch_inputs, batch_labels, _image_ids) in enumerate(loaders.train, start=1):
+            if active_config.limit_train_batches is not None and batch_index > active_config.limit_train_batches:
+                break
             batch_inputs = batch_inputs.to(device, non_blocking=non_blocking)
             batch_labels = batch_labels.to(device, non_blocking=non_blocking)
             optimizer.zero_grad()
@@ -784,7 +909,12 @@ def run_training(
                 _log(f"epoch={epoch} batch={batch_index}/{len(loaders.train)} loss={loss.item():.6f} elapsed_seconds={elapsed:.2f}")
         scheduler.step()
 
-        validation_labels, probabilities = _collect_validation_predictions(model, loaders.validation, device=device)
+        validation_labels, probabilities = _collect_validation_predictions(
+            model,
+            loaders.validation,
+            device=device,
+            limit_batches=active_config.limit_val_batches,
+        )
         threshold = find_best_threshold(y_true=validation_labels, probabilities=probabilities)
         metrics = compute_binary_metrics(
             y_true=validation_labels,
@@ -800,10 +930,10 @@ def run_training(
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
 
     assert best_state is not None and best_metrics is not None and best_threshold is not None
-    model_output = V5_MODEL_OUTPUT if active_config.v5 else V2_MODEL_OUTPUT if active_config.v2 else DEFAULT_MODEL_OUTPUT
-    metrics_output = V5_METRICS_OUTPUT if active_config.v5 else V2_METRICS_OUTPUT if active_config.v2 else DEFAULT_METRICS_OUTPUT
-    threshold_output = V5_THRESHOLD_OUTPUT if active_config.v5 else V2_THRESHOLD_OUTPUT if active_config.v2 else DEFAULT_THRESHOLD_OUTPUT
-    predictions_output = V5_PREDICTIONS_OUTPUT if active_config.v5 else V2_PREDICTIONS_OUTPUT if active_config.v2 else DEFAULT_PREDICTIONS_OUTPUT
+    model_output = _default_model_output_for_config(active_config)
+    metrics_output = _default_metrics_output_for_config(active_config)
+    threshold_output = _default_threshold_output_for_config(active_config)
+    predictions_output = _default_predictions_output_for_config(active_config)
     model_path = _resolve_output_path(output_root, model_output)
     metrics_path = _resolve_output_path(output_root, metrics_output)
     threshold_path = _resolve_output_path(output_root, threshold_output)
@@ -860,10 +990,16 @@ def run_training(
             experiment_name=active_config.experiment_name,
             hard_example_strategy=active_config.hard_example_strategy,
             imbalance_strategy=active_config.imbalance_strategy,
-            hard_example_source_used=hard_example_report.hard_example_source_used,
+            hard_example_source_used=(
+                hard_example_report.hard_example_source_used
+                if hard_example_report is not None
+                else str(v2_2_hard_example_summary.get("hard_negatives_path", ""))
+            ),
             split_disjointness={
                 **split_disjointness,
-                "hard_examples": asdict(hard_example_report),
+                "hard_examples": (
+                    asdict(hard_example_report) if hard_example_report is not None else v2_2_hard_example_summary
+                ),
             },
             selected_model_name=selected_model_name,
             fallback_model_name=active_config.fallback_model_name if active_config.v5 else "",
@@ -902,7 +1038,7 @@ def run_training(
         validate_v5_metrics_report(metrics_path)
         validate_v5_validation_predictions(predictions_path, expected_validation_ids=[example.image_id for example in split.validation])
     if active_config.v2 and v1_baseline is not None:
-        comparison_path = _resolve_output_path(output_root, V2_COMPARISON_OUTPUT)
+        comparison_path = _resolve_output_path(output_root, _default_comparison_output_for_config(active_config))
         comparison_path.parent.mkdir(parents=True, exist_ok=True)
         v2_candidate = V2CandidateResult(
             experiment_name=active_config.experiment_name,
@@ -1023,6 +1159,56 @@ def _requires_start_checkpoint(config: TrainingRunConfig) -> bool:
     return "v2b_enhanced" in config.experiment_name.lower()
 
 
+def _is_v2_2_config(config: TrainingRunConfig) -> bool:
+    return config.experiment_name == "v2_2_hard_examples"
+
+
+def _default_model_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_MODEL_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_MODEL_OUTPUT
+    if config.v2:
+        return V2_MODEL_OUTPUT
+    return DEFAULT_MODEL_OUTPUT
+
+
+def _default_metrics_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_METRICS_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_METRICS_OUTPUT
+    if config.v2:
+        return V2_METRICS_OUTPUT
+    return DEFAULT_METRICS_OUTPUT
+
+
+def _default_threshold_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_THRESHOLD_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_THRESHOLD_OUTPUT
+    if config.v2:
+        return V2_THRESHOLD_OUTPUT
+    return DEFAULT_THRESHOLD_OUTPUT
+
+
+def _default_predictions_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.v5:
+        return V5_PREDICTIONS_OUTPUT
+    if _is_v2_2_config(config):
+        return V2_2_PREDICTIONS_OUTPUT
+    if config.v2:
+        return V2_PREDICTIONS_OUTPUT
+    return DEFAULT_PREDICTIONS_OUTPUT
+
+
+def _default_comparison_output_for_config(config: TrainingRunConfig) -> Path:
+    if _is_v2_2_config(config):
+        return V2_2_COMPARISON_OUTPUT
+    return V2_COMPARISON_OUTPUT
+
+
 def build_hard_example_weight_map(
     report: "HardExampleSourceReport",
     *,
@@ -1092,12 +1278,14 @@ def validate_v5_scope_guards(options: dict[str, object]) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Train the SPEC-005 binary classifier.")
     parser.add_argument("--config", default="configs/classifier.yaml")
-    parser.add_argument("--dataset-root", required=True)
-    parser.add_argument("--output-root", default="outputs")
+    parser.add_argument("--dataset-root", default=None)
+    parser.add_argument("--output-root", default=None)
     parser.add_argument("--synthetic-smoke", action="store_true")
-    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--epochs", "--max-epochs", dest="epochs", type=int, default=None)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-val-samples", type=int, default=None)
+    parser.add_argument("--limit-train-batches", type=int, default=None)
+    parser.add_argument("--limit-val-batches", type=int, default=None)
     parser.add_argument("--log-every-n-batches", type=int, default=None)
     args = parser.parse_args(argv)
 
@@ -1107,13 +1295,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         overrides["max_train_samples"] = args.max_train_samples
     if args.max_val_samples is not None:
         overrides["max_val_samples"] = args.max_val_samples
+    if args.limit_train_batches is not None:
+        overrides["limit_train_batches"] = args.limit_train_batches
+    if args.limit_val_batches is not None:
+        overrides["limit_val_batches"] = args.limit_val_batches
     if args.log_every_n_batches is not None:
         overrides["log_every_n_batches"] = args.log_every_n_batches
     if overrides:
         config = _replace_config(config, **overrides)
+    dataset_root = args.dataset_root or config.dataset_root
+    if not dataset_root:
+        parser.error("--dataset-root is required unless data.dataset_root is configured")
+    output_root = args.output_root or config.output_root or "outputs"
     result = run_training(
-        dataset_root=args.dataset_root,
-        output_root=args.output_root,
+        dataset_root=dataset_root,
+        output_root=output_root,
         config=config,
         synthetic_smoke=args.synthetic_smoke,
         epochs=args.epochs,
@@ -1234,12 +1430,15 @@ def _collect_validation_predictions(
     loader: DataLoader,
     *,
     device: torch.device,
+    limit_batches: Optional[int] = None,
 ) -> tuple[list[int], list[float]]:
     labels: list[int] = []
     probabilities: list[float] = []
     model.eval()
     with torch.no_grad():
-        for batch_inputs, batch_labels, _image_ids in loader:
+        for batch_index, (batch_inputs, batch_labels, _image_ids) in enumerate(loader, start=1):
+            if limit_batches is not None and batch_index > limit_batches:
+                break
             batch_inputs = batch_inputs.to(device)
             batch_labels = batch_labels.to(device)
             logits = model(batch_inputs)
