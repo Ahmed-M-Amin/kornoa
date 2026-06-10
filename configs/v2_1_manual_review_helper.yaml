@@ -1,0 +1,15 @@
+input:
+  manual_review_template: outputs/analysis/v2_1_error_intelligence/review_groups/manual_review_template.csv
+
+dataset:
+  train_images: 1st-krones-vision-ai-challenge/train_images
+
+review:
+  max_rows_per_group: 50
+  near_threshold_distance: 0.05
+  allow_test_labels: false
+  generate_submission: false
+  train_model: false
+
+output:
+  root: outputs/analysis/v2_1_error_intelligence/manual_review

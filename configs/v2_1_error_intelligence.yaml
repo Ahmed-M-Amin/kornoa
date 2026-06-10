@@ -10,11 +10,18 @@ evidence:
   detector: outputs/hybrid/v4/predictions/val_detector_predictions.csv
   image_quality: outputs/analysis/v2_1_error_intelligence/input/val_image_quality.csv
 
+dataset:
+  train_images: 1st-krones-vision-ai-challenge/train_images
+
 analysis:
   positive_class: 1
   near_threshold_distance: 0.05
   high_confidence_distance: 0.30
   metric_tolerance: 0.000001
+  threshold_sweep_start: 0.24
+  threshold_sweep_end: 0.44
+  threshold_sweep_step: 0.02
+  close_f1_delta: 0.002
   allow_test_labels: false
   generate_submission: false
   train_model: false

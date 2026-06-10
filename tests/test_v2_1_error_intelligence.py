@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from PIL import Image
 
 
 def _write_predictions(path: Path, rows: list[dict[str, object]]) -> None:
@@ -58,8 +59,10 @@ def _write_inputs(tmp_path: Path) -> dict[str, Path]:
         "submission": tmp_path / "submission_v2b.csv",
         "quality": tmp_path / "image_quality.csv",
         "detector": tmp_path / "detector.csv",
+        "train_images": tmp_path / "train_images",
         "output_root": tmp_path / "outputs" / "analysis" / "v2_1_error_intelligence",
     }
+    paths["train_images"].mkdir(parents=True)
     _write_labels(paths["labels"], labels)
     _write_predictions(paths["predictions"], predictions)
     paths["threshold"].write_text(json.dumps({"threshold": 0.50}), encoding="utf-8")
@@ -94,6 +97,89 @@ def _write_inputs(tmp_path: Path) -> dict[str, Path]:
             {"image_id": "f.jpg", "category": "bubble", "confidence": 0.90, "bbox": "[0,0,5,5]", "area": 25.0},
         ],
     )
+    for image_id, color in {
+        "a.jpg": (200, 20, 20),
+        "b.jpg": (20, 200, 20),
+        "c.jpg": (20, 20, 200),
+        "d.jpg": (180, 180, 40),
+        "e.jpg": (40, 180, 180),
+        "f.jpg": (160, 80, 180),
+        "g.jpg": (120, 120, 120),
+    }.items():
+        Image.new("RGB", (72, 72), color).save(paths["train_images"] / image_id)
+    return paths
+
+
+def _write_real_schema_inputs(tmp_path: Path) -> dict[str, Path]:
+    labels = [
+        {"image_id": "merge_only_a.jpg", "target": 0},
+        {"image_id": "merge_only_b.jpg", "target": 0},
+    ]
+    predictions = [
+        {
+            "image_id": "real_a.jpg",
+            "true_label": 1,
+            "probability": 0.91,
+            "threshold": 0.32,
+            "predicted_label": 1,
+        },
+        {
+            "image_id": "real_b.jpg",
+            "true_label": 0,
+            "probability": 0.40,
+            "threshold": 0.32,
+            "predicted_label": 1,
+        },
+        {
+            "image_id": "real_c.jpg",
+            "true_label": 0,
+            "probability": 0.20,
+            "threshold": 0.32,
+            "predicted_label": 0,
+        },
+        {
+            "image_id": "real_d.jpg",
+            "true_label": 1,
+            "probability": 0.10,
+            "threshold": 0.32,
+            "predicted_label": 0,
+        },
+    ]
+    paths = {
+        "labels": tmp_path / "train.csv",
+        "predictions": tmp_path / "val_classifier_predictions.csv",
+        "threshold": tmp_path / "best_threshold.json",
+        "metrics": tmp_path / "classifier_metrics.json",
+        "submission": tmp_path / "submission_v2b.csv",
+        "quality": tmp_path / "image_quality.csv",
+        "detector": tmp_path / "detector.csv",
+        "train_images": tmp_path / "train_images",
+        "output_root": tmp_path / "outputs" / "analysis" / "v2_1_error_intelligence",
+    }
+    paths["train_images"].mkdir(parents=True)
+    _write_labels(paths["labels"], labels)
+    _write_predictions(paths["predictions"], predictions)
+    paths["threshold"].write_text(json.dumps({"threshold": 0.32, "f1_score": 0.5}), encoding="utf-8")
+    paths["metrics"].write_text(
+        json.dumps(
+            {
+                "f1_score": 0.5,
+                "threshold": 0.32,
+                "confusion_counts": {"tp": 1, "fp": 1, "tn": 1, "fn": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame({"image_id": ["test_a.jpg"], "target": [0]}).to_csv(paths["submission"], index=False)
+    _write_quality(paths["quality"], [])
+    _write_detector(paths["detector"], [])
+    for image_id, color in {
+        "real_a.jpg": (200, 20, 20),
+        "real_b.jpg": (20, 200, 20),
+        "real_c.jpg": (20, 20, 200),
+        "real_d.jpg": (180, 180, 40),
+    }.items():
+        Image.new("RGB", (72, 72), color).save(paths["train_images"] / image_id)
     return paths
 
 
@@ -111,11 +197,16 @@ def _write_config(tmp_path: Path, paths: dict[str, Path], **analysis_overrides: 
             "detector": str(paths["detector"]),
             "image_quality": str(paths["quality"]),
         },
+        "dataset": {"train_images": str(paths["train_images"])},
         "analysis": {
             "positive_class": 1,
             "near_threshold_distance": 0.05,
             "high_confidence_distance": 0.30,
             "metric_tolerance": 0.000001,
+            "threshold_sweep_start": 0.24,
+            "threshold_sweep_end": 0.44,
+            "threshold_sweep_step": 0.02,
+            "close_f1_delta": 0.002,
             "allow_test_labels": False,
             "generate_submission": False,
             "train_model": False,
@@ -162,6 +253,35 @@ def test_config_rejects_test_labels_and_sample_submission_paths(tmp_path):
         validate_config_safety(payload)
 
 
+def test_real_v2b_metric_schema_passes_without_precision_and_recall(tmp_path):
+    from src.analysis.v2_1_error_intelligence import run_error_intelligence
+
+    paths = _write_real_schema_inputs(tmp_path)
+    config_path = _write_config(tmp_path, paths)
+
+    outputs = run_error_intelligence(config_path)
+
+    summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
+    provenance = json.loads(outputs["provenance"].read_text(encoding="utf-8"))
+    assert summary["baseline_match"] is True
+    assert summary["baseline_metrics"]["precision"] == pytest.approx(0.5)
+    assert summary["baseline_metrics"]["recall"] == pytest.approx(0.5)
+    assert summary["computed_metrics"]["f1_score"] == pytest.approx(0.5)
+    assert provenance["outputs"]["mismatch_report"].endswith("v2b_baseline_metric_mismatch.json")
+
+
+def test_predictions_true_label_is_preferred_over_validation_label_merge(tmp_path):
+    from src.analysis.v2_1_error_intelligence import run_error_intelligence
+
+    paths = _write_real_schema_inputs(tmp_path)
+    config_path = _write_config(tmp_path, paths)
+
+    outputs = run_error_intelligence(config_path)
+
+    audit = pd.read_csv(outputs["audit"])
+    assert sorted(audit["image_id"].tolist()) == ["real_a.jpg", "real_b.jpg", "real_c.jpg", "real_d.jpg"]
+
+
 def test_run_error_intelligence_builds_audit_and_summary(tmp_path):
     from src.analysis.v2_1_error_intelligence import AUDIT_COLUMNS, run_error_intelligence
 
@@ -178,6 +298,38 @@ def test_run_error_intelligence_builds_audit_and_summary(tmp_path):
     summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
     assert summary["baseline_match"] is True
     assert summary["computed_metrics"]["confusion_counts"] == {"tp": 2, "fp": 1, "fn": 2, "tn": 2}
+
+
+def test_threshold_sweep_computes_metrics_correctly(tmp_path):
+    from src.analysis.v2_1_error_intelligence import run_error_intelligence
+
+    paths = _write_inputs(tmp_path)
+    config_path = _write_config(tmp_path, paths)
+
+    outputs = run_error_intelligence(config_path)
+
+    sweep = pd.read_csv(outputs["threshold_sweep"])
+    row_032 = sweep.loc[sweep["threshold"] == 0.32].iloc[0]
+    assert row_032["tp"] == 3
+    assert row_032["fp"] == 2
+    assert row_032["fn"] == 1
+    assert row_032["tn"] == 1
+    assert row_032["predicted_1"] == 5
+    assert row_032["predicted_0"] == 2
+
+
+def test_threshold_stability_summary_includes_close_thresholds(tmp_path):
+    from src.analysis.v2_1_error_intelligence import run_error_intelligence
+
+    paths = _write_inputs(tmp_path)
+    config_path = _write_config(tmp_path, paths)
+
+    outputs = run_error_intelligence(config_path)
+
+    summary = json.loads(outputs["threshold_stability_summary"].read_text(encoding="utf-8"))
+    thresholds = [row["threshold"] for row in summary["close_f1_thresholds"]]
+    assert 0.32 in thresholds
+    assert 0.34 in thresholds
 
 
 def test_metric_mismatch_fails_before_accepting_outputs(tmp_path):
@@ -275,7 +427,53 @@ def test_optional_evidence_report_and_provenance_are_written(tmp_path):
     assert evidence_report["missing_optional_evidence_counts"] == {"detector": 5, "image_quality": 3}
     assert "validation_predictions" in provenance["baseline"]
     assert provenance["optional_evidence"]["detector"] == str(paths["detector"])
+    assert provenance["dataset"]["train_images"] == str(paths["train_images"])
     assert target_distribution["prediction_distribution"] == {"target_0": 4, "target_1": 3}
+
+
+def test_contact_sheet_generation_works_with_dummy_images(tmp_path):
+    from src.analysis.v2_1_error_intelligence import run_error_intelligence
+
+    paths = _write_inputs(tmp_path)
+    config_path = _write_config(tmp_path, paths)
+
+    outputs = run_error_intelligence(config_path)
+
+    sheet_path = outputs["near_threshold_false_positives_sheet"]
+    assert sheet_path.exists()
+    image = Image.open(sheet_path)
+    assert image.size[0] > 0
+    assert image.size[1] > 0
+
+
+def test_missing_images_do_not_crash_contact_sheet_generation(tmp_path):
+    from src.analysis.v2_1_error_intelligence import run_error_intelligence
+
+    paths = _write_inputs(tmp_path)
+    (paths["train_images"] / "b.jpg").unlink()
+    config_path = _write_config(tmp_path, paths)
+
+    outputs = run_error_intelligence(config_path)
+
+    summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
+    assert "b.jpg" in summary["contact_sheets"]["missing_images"]["near_threshold_false_positives"]
+
+
+def test_manual_review_template_has_required_columns(tmp_path):
+    from src.analysis.v2_1_error_intelligence import MANUAL_REVIEW_COLUMNS, run_error_intelligence
+
+    paths = _write_inputs(tmp_path)
+    config_path = _write_config(tmp_path, paths)
+
+    outputs = run_error_intelligence(config_path)
+
+    template = pd.read_csv(outputs["manual_review_template"])
+    assert list(template.columns) == MANUAL_REVIEW_COLUMNS
+    assert set(template["review_group"]) == {
+        "near_threshold_false_positives",
+        "near_threshold_false_negatives",
+        "over_rejected_reusable",
+    }
 
 
 def test_cli_reports_expected_errors_without_traceback(tmp_path, capsys):

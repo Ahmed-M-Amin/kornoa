@@ -1,0 +1,54 @@
+experiment:
+  name: v2_2_hard_examples
+  seed: 42
+
+data:
+  dataset_root: 1st-krones-vision-ai-challenge
+  split_source: v2b_compatible
+  validation_split: 0.2
+
+model:
+  model_name: efficientnet_b1
+  image_size: 384
+  num_classes: 2
+  start_checkpoint: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/models/classifier_best.pth
+
+training:
+  epochs: 4
+  batch_size: 4
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  loss: bce
+  weighted_sampler: false
+  focal_loss: false
+  augmentation_recipe: mild_safe
+  hard_example_strategy: analysis_only
+  num_workers: 0
+  pin_memory: false
+  device: auto
+  save_validation_predictions: true
+  save_best_threshold: true
+  save_metrics: true
+  save_model_checkpoint: true
+
+hard_examples:
+  enabled: true
+  hard_negatives: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_candidate_hard_negatives_all.csv
+  hard_positives: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_candidate_hard_positives_all.csv
+  uncertain_examples: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_uncertain_examples_all.csv
+  hard_negative_weight: 1.5
+  hard_positive_weight: 1.5
+  uncertain_weight: 1.0
+  max_extra_sampling_multiplier: 2.0
+
+metrics:
+  validation_f1: binary
+  positive_class: 1
+  zero_division: 0
+  threshold_selection: validation_only
+
+safety:
+  allow_test_labels: false
+  generate_submission: false
+  train_detector: false
+  overwrite_v2b_artifacts: false
