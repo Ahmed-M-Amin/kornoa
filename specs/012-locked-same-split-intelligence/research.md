@@ -36,8 +36,8 @@
 
 **Alternatives considered**: Zero tolerance was rejected because it would over-penalize tiny fluctuations that do not materially harm the roadmap goal. Larger tolerances such as `0.02` or `0.03` were rejected because they would let the hard-row bottleneck weaken too much while still calling a candidate `accepted`.
 
-## Decision: Treat a clearly weaker candidate as any candidate with lower full locked-row F1 than V2B
+## Decision: Auto-assign `rejected` only when both overall and hard-example evidence regress
 
-**Rationale**: The spec says `manual_review` should be used unless the candidate is clearly weaker overall. The cleanest, most testable rule is that a candidate with lower full locked-row F1 than V2B is `rejected`, while candidates with improved full locked-row F1 but unacceptable hard-row regression remain `manual_review`.
+**Rationale**: The clarified spec now makes all three decision states explicit. A candidate is `rejected` only when full locked-row F1 does not improve over V2B and hard-example-only F1 regresses by more than an absolute `0.01`, while mixed outcomes remain `manual_review`.
 
-**Alternatives considered**: Requiring simultaneous precision and recall degradation for rejection was rejected because it makes the state logic harder to explain and test. Using hard-example-only weakness alone as rejection was rejected because the clarified status rule reserves many mixed cases for `manual_review`.
+**Alternatives considered**: Rejecting any candidate with lower full locked-row F1 alone was rejected because it would collapse too many mixed-signal outcomes into `rejected` and weaken the distinction between `rejected` and `manual_review`. Requiring simultaneous precision and recall degradation was rejected because it makes the state logic harder to explain and test.

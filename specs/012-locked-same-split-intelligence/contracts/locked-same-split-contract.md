@@ -87,14 +87,15 @@ The selected candidate is `accepted` only when:
 
 The selected candidate is `rejected` when:
 
-- full locked-row F1 is lower than V2B
+- full locked-row F1 does not improve over V2B, and
+- hard-example-only F1 regresses by more than an absolute `0.01`
 
 ### `manual_review`
 
 The selected candidate is `manual_review` when:
 
 - full locked-row F1 improves but hard-example-only F1 regresses beyond `0.01`, or
-- the locked same-split evidence is mixed and not clearly stronger or weaker
+- the locked same-split evidence is mixed and satisfies neither the `accepted` rule nor the `rejected` rule
 
 ## Safety Contract
 

@@ -17,6 +17,8 @@
 - Q: Should Phase 1 output only one candidate artifact set or also maintain a rolling multi-candidate comparison table? -> A: Include a rolling comparison table across multiple candidates as part of Phase 1 output.
 - Q: What decision statuses should the rolling comparison table use? -> A: Limit decision status to `accepted`, `rejected`, or `manual_review` based only on locked same-split evidence.
 - Q: What locked same-split rule should decide whether a candidate becomes `accepted` instead of `manual_review`? -> A: Mark a candidate `accepted` if full locked-row performance improves and hard-example performance does not regress beyond a small tolerance; otherwise use `manual_review`.
+- Q: What exact hard-example regression tolerance should the candidate gate use? -> A: Use an absolute hard-example-only F1 regression tolerance of `0.01`.
+- Q: When should the system auto-assign `rejected` instead of `manual_review`? -> A: Use `rejected` when full locked-row F1 does not improve and hard-example-only F1 regresses by more than an absolute `0.01`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -40,7 +42,7 @@ As the model developer, I need one locked same-split comparison between the orig
 
 As the model developer, I need the locked same-split comparison divided into all rows, hard-example rows only, and locked validation rows excluding hard examples so I can see whether gains come from true boundary improvement or only from easier rows.
 
-**Why this priority**: The roadmap’s target of `0.98+` is currently blocked by the hardest rows. This story isolates that bottleneck and shows whether a candidate is actually closing the hard-example gap.
+**Why this priority**: The roadmap's target of `0.98+` is currently blocked by the hardest rows. This story isolates that bottleneck and shows whether a candidate is actually closing the hard-example gap.
 
 **Independent Test**: Can be tested independently by comparing section row counts against the locked row set and the configured hard-example lists, then verifying that no row belongs to both the excluded and included sections incorrectly.
 
@@ -90,12 +92,14 @@ As the model developer, I need review-ready error splits and a rolling same-spli
 - **FR-008**: The system MUST produce a threshold sweep for the compared candidate on the locked V2B validation rows.
 - **FR-009**: The feature MUST record the paths or identifiers of the V2B prediction source, candidate checkpoint, candidate threshold source, and hard-example files used for the comparison.
 - **FR-010**: The feature MUST assign one decision status of `accepted`, `rejected`, or `manual_review` to the selected compared candidate based only on locked same-split evidence.
-- **FR-011**: The feature MUST mark a candidate `accepted` only when full locked-row performance improves over V2B and hard-example performance does not regress beyond a defined small tolerance; otherwise the feature MUST use `manual_review` unless the candidate is clearly weaker overall.
-- **FR-012**: The feature MUST prohibit test labels, sample-submission labels, public leaderboard tuning, training, and submission generation.
-- **FR-013**: The feature MUST preserve enough row-level evidence to support future hard-row taxonomy, candidate comparison, and final insight reporting.
-- **FR-014**: The feature MUST allow detector and image-quality evidence to be attached later without changing the locked same-split comparison contract or invalidating prior comparison outputs.
-- **FR-015**: The feature MUST maintain a rolling comparison table that records locked same-split results for each evaluated V2.x candidate in a consistent candidate-to-V2B format.
-- **FR-016**: The rolling comparison table MUST include, at minimum, candidate identity, locked full-row metrics, hard-example-only metrics, locked rows excluding hard examples metrics, and candidate decision status.
+- **FR-011**: The feature MUST mark a candidate `accepted` only when full locked-row performance improves over V2B and hard-example-only F1 does not regress by more than an absolute `0.01` versus V2B.
+- **FR-012**: The feature MUST mark a candidate `rejected` when full locked-row F1 does not improve over V2B and hard-example-only F1 regresses by more than an absolute `0.01` versus V2B.
+- **FR-013**: The feature MUST assign `manual_review` to comparison outcomes that do not satisfy either the `accepted` rule or the `rejected` rule.
+- **FR-014**: The feature MUST prohibit test labels, sample-submission labels, public leaderboard tuning, training, and submission generation.
+- **FR-015**: The feature MUST preserve enough row-level evidence to support future hard-row taxonomy, candidate comparison, and final insight reporting.
+- **FR-016**: The feature MUST allow detector and image-quality evidence to be attached later without changing the locked same-split comparison contract or invalidating prior comparison outputs.
+- **FR-017**: The feature MUST maintain a rolling comparison table that records locked same-split results for each evaluated V2.x candidate in a consistent candidate-to-V2B format.
+- **FR-018**: The rolling comparison table MUST include, at minimum, candidate identity, locked full-row metrics, hard-example-only metrics, locked rows excluding hard examples metrics, and candidate decision status.
 
 ### Constitution Alignment *(mandatory)*
 
@@ -130,7 +134,8 @@ As the model developer, I need review-ready error splits and a rolling same-spli
 - **SC-006**: A reviewer can determine from the generated outputs whether candidate gains come from the hardest rows, easier rows, or both without re-running inference.
 - **SC-007**: The produced artifacts are sufficient to support the next hard-row failure-mode review and the candidate comparison table described in the roadmap.
 - **SC-008**: After at least two candidate evaluations, the rolling comparison table shows each evaluated candidate in one consistent locked same-split summary format without manual reconciliation.
-- **SC-009**: Any candidate marked `accepted` is traceably supported by an improved full locked-row result and no hard-example regression beyond the defined tolerance in the recorded comparison outputs.
+- **SC-009**: Any candidate marked `accepted` is traceably supported by an improved full locked-row result and no hard-example-only F1 regression greater than an absolute `0.01` in the recorded comparison outputs.
+- **SC-010**: Any candidate marked `rejected` is traceably supported by a non-improved full locked-row F1 result and a hard-example-only F1 regression greater than an absolute `0.01` in the recorded comparison outputs.
 
 ## Assumptions
 
@@ -140,4 +145,4 @@ As the model developer, I need review-ready error splits and a rolling same-spli
 - Hard-example files are derived from prior validation-only analysis and are safe to use as row tags for locked-row comparison.
 - Optional detector or image-quality evidence may be attached later, but the core Phase 1 feature remains valid without them.
 - Phase 1 is an analysis and reporting feature only; it does not include new training, submission creation, or public-score-driven threshold tuning.
-- The exact numeric tolerance for allowable hard-example regression will be defined during planning, but it must be small enough to preserve the roadmap’s focus on the hardest rows.
+- The allowable hard-example regression tolerance is fixed at an absolute `0.01` hard-example-only F1 difference versus V2B.

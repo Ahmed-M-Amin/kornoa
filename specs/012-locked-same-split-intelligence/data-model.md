@@ -121,8 +121,8 @@ Represents one persisted row in the rolling same-split comparison table.
 
 - `decision_status` must be derived from locked same-split evidence only.
 - `accepted` requires improved full locked-row F1 and no hard-example-only F1 regression beyond `0.01`.
-- `rejected` requires lower full locked-row F1 than V2B.
-- `manual_review` captures mixed cases that are neither `accepted` nor clearly `rejected`.
+- `rejected` requires non-improved full locked-row F1 and hard-example-only F1 regression beyond `0.01`.
+- `manual_review` captures mixed cases that satisfy neither the `accepted` rule nor the `rejected` rule.
 
 ## Same-Split Summary
 

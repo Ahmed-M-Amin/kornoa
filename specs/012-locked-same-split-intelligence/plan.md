@@ -26,7 +26,7 @@ The technical approach extends the existing `src/analysis/v2_2_same_split_eval.p
 
 **Performance Goals**: Offline same-split comparison should finish in seconds for normal validation CSV sizes and must add zero runtime to final inference because it is not part of the deployed prediction path.
 
-**Constraints**: Preserve `0 = Reusable` and `1 = Not Reusable`; use validation-only locked rows; do not use test labels, sample-submission labels, or public leaderboard tuning; do not train; do not generate Kaggle submissions; evaluate one selected V2.x candidate at a time; mark a candidate `accepted` only when full locked-row performance improves and hard-example-only F1 does not regress by more than an absolute `0.01` tolerance from V2B.
+**Constraints**: Preserve `0 = Reusable` and `1 = Not Reusable`; use validation-only locked rows; do not use test labels, sample-submission labels, or public leaderboard tuning; do not train; do not generate Kaggle submissions; evaluate one selected V2.x candidate at a time; mark a candidate `accepted` only when full locked-row performance improves and hard-example-only F1 does not regress by more than an absolute `0.01` from V2B; mark a candidate `rejected` only when full locked-row F1 does not improve and hard-example-only F1 regresses by more than an absolute `0.01`.
 
 **Scale/Scope**: One locked-row comparison workflow, three evaluation sections, four row-level comparison buckets, one rolling candidate comparison table, one threshold sweep, one candidate decision rule, and tests. Out of scope: new training, detector/rule fusion changes, leaderboard submission logic, dashboard UI, Grad-CAM generation, and multi-candidate inference in one run.
 
@@ -100,6 +100,6 @@ See [data-model.md](./data-model.md), [contracts/locked-same-split-contract.md](
 
 - PASS: Data model preserves binary target semantics and distinguishes locked rows, candidate rows, section metrics, comparison buckets, and rolling candidate comparison records.
 - PASS: Contract keeps the workflow validation-only, analysis-only, and one-candidate-at-a-time while supporting later optional evidence attachment.
-- PASS: The `accepted` decision gate is explicit: full locked-row improvement plus no hard-example-only F1 regression beyond `0.01`.
+- PASS: The decision gates are explicit: `accepted` requires full locked-row improvement plus no hard-example-only F1 regression beyond `0.01`, `rejected` requires non-improved full locked-row F1 plus hard-example-only regression beyond `0.01`, and mixed cases fall to `manual_review`.
 - PASS: Rolling comparison-table behavior is documented without introducing leaderboard tuning, training, or submission generation.
 - PASS: Outputs stay under ignored analysis paths and remain compatible with local, Kaggle, and Colab artifact movement.

@@ -30,13 +30,13 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 [P] Add tests for config safety rules blocking test labels, submission creation, and training in `tests/test_v2_2_same_split_eval.py`
-- [ ] T005 [P] Add tests for locked-row normalization, duplicate rejection, and same-row alignment in `tests/test_v2_2_same_split_eval.py`
-- [ ] T006 [P] Add tests for one-candidate-per-run behavior and V2.2-as-first-example config handling in `tests/test_v2_2_same_split_eval.py`
-- [ ] T007 Implement config loading, path resolution, and safety validation in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T008 Implement locked V2B row loading, candidate row loading, and shared `image_id` normalization helpers in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T009 Implement hard-example tagging, section partition helpers, and row-bucket partition helpers in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T010 Implement candidate decision status helpers for `accepted`, `rejected`, and `manual_review`, including the `0.01` hard-example regression tolerance, in `src/analysis/v2_2_same_split_eval.py`
+- [X] T004 [P] Add failing safety tests that reject test labels, sample-submission labels, training actions, submission creation, and unsafe analysis-side-effect paths in `tests/test_v2_2_same_split_eval.py`
+- [X] T005 [P] Add failing alignment tests for binary locked-row validation, duplicate `image_id` rejection, normalized `image_id` joins, and row-count mismatch handling in `tests/test_v2_2_same_split_eval.py`
+- [X] T006 [P] Add failing candidate-selection tests for one-candidate-per-run enforcement, required candidate provenance fields, and V2.2-as-first-example defaults in `tests/test_v2_2_same_split_eval.py`
+- [X] T007 Implement shared analysis config parsing, path resolution, run-manifest capture, and safety validation in `src/analysis/v2_2_same_split_eval.py`
+- [X] T008 Implement locked V2B source loading, candidate source loading, `image_id` normalization, and deterministic same-row alignment helpers in `src/analysis/v2_2_same_split_eval.py`
+- [X] T009 Implement shared hard-example registry, section membership helpers, and comparison-bucket enumeration used by all downstream metrics and reports in `src/analysis/v2_2_same_split_eval.py`
+- [X] T010 Implement candidate gate evaluation and decision-payload helpers for `accepted`, `rejected`, and `manual_review`, including the `0.01` hard-example regression tolerance and explicit decision reasons, in `src/analysis/v2_2_same_split_eval.py`
 
 **Checkpoint**: Foundation ready; user story implementation can now begin.
 
@@ -50,15 +50,15 @@
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Add a failing test that verifies V2B and the selected candidate are evaluated on exactly the same locked validation rows in `tests/test_v2_2_same_split_eval.py`
-- [ ] T012 [P] [US1] Add a failing test that verifies full locked-row metrics include F1, precision, recall, TP, FP, TN, FN, prediction distribution, and target distribution for both models in `tests/test_v2_2_same_split_eval.py`
-- [ ] T013 [P] [US1] Add a failing test that verifies the summary JSON records candidate provenance, safety flags, and one decision status in `tests/test_v2_2_same_split_eval.py`
+- [X] T011 [P] [US1] Add a failing test that verifies V2B and the selected candidate are evaluated on exactly the same locked validation rows in `tests/test_v2_2_same_split_eval.py`
+- [X] T012 [P] [US1] Add a failing test that verifies full locked-row metrics include F1, precision, recall, TP, FP, TN, FN, prediction distribution, and target distribution for both models in `tests/test_v2_2_same_split_eval.py`
+- [X] T013 [P] [US1] Add a failing test that verifies the summary JSON records candidate provenance, safety flags, and one decision status in `tests/test_v2_2_same_split_eval.py`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Implement locked same-split metric computation for V2B and the selected candidate in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T015 [US1] Implement summary JSON generation with candidate provenance, safety flags, and locked-row section output in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T016 [US1] Implement CLI run orchestration and expected-analysis-only error handling in `src/analysis/v2_2_same_split_eval.py`
+- [X] T014 [US1] Implement locked same-split metric computation for V2B and the selected candidate in `src/analysis/v2_2_same_split_eval.py`
+- [X] T015 [US1] Implement summary JSON generation with candidate provenance, safety flags, and locked-row section output in `src/analysis/v2_2_same_split_eval.py`
+- [X] T016 [US1] Implement CLI run orchestration and expected-analysis-only error handling in `src/analysis/v2_2_same_split_eval.py`
 
 **Checkpoint**: User Story 1 is functional and independently testable.
 
@@ -72,15 +72,16 @@
 
 ### Tests for User Story 2
 
-- [ ] T017 [P] [US2] Add a failing test that verifies the evaluator produces `all_original_v2b_validation_rows`, `hard_example_rows_only`, and `original_v2b_validation_excluding_hard_examples` in `tests/test_v2_2_same_split_eval.py`
-- [ ] T018 [P] [US2] Add a failing test that verifies rows are tagged with the correct hard-example type, including overlapping hard-example sources, in `tests/test_v2_2_same_split_eval.py`
-- [ ] T019 [P] [US2] Add a failing test that verifies candidate decision status uses full locked-row improvement plus the `0.01` hard-example regression tolerance in `tests/test_v2_2_same_split_eval.py`
+- [X] T017 [P] [US2] Add a failing test that verifies the evaluator produces `all_original_v2b_validation_rows`, `hard_example_rows_only`, and `original_v2b_validation_excluding_hard_examples` in `tests/test_v2_2_same_split_eval.py`
+- [X] T018 [P] [US2] Add a failing test that verifies rows are tagged with the correct hard-example type, including overlapping hard-example sources, in `tests/test_v2_2_same_split_eval.py`
+- [X] T019 [P] [US2] Add a failing test that verifies `accepted` requires full locked-row improvement plus no hard-example-only F1 regression beyond `0.01` in `tests/test_v2_2_same_split_eval.py`
+- [X] T020 [P] [US2] Add a failing test that verifies `rejected` requires non-improved full locked-row F1 plus hard-example-only F1 regression beyond `0.01`, and that mixed outcomes become `manual_review`, in `tests/test_v2_2_same_split_eval.py`
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Implement sectioned same-split metric generation for all rows, hard-example-only rows, and excluding-hard-example rows in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T021 [US2] Implement hard-example type preservation and overlap-safe tagging in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T022 [US2] Implement candidate decision rule application across section metrics in `src/analysis/v2_2_same_split_eval.py`
+- [X] T021 [US2] Implement sectioned same-split metric generation for all rows, hard-example-only rows, and excluding-hard-example rows in `src/analysis/v2_2_same_split_eval.py`
+- [X] T022 [US2] Implement hard-example type preservation and overlap-safe tagging in `src/analysis/v2_2_same_split_eval.py`
+- [X] T023 [US2] Implement explicit `accepted`, `rejected`, and `manual_review` decision rule application across section metrics in `src/analysis/v2_2_same_split_eval.py`
 
 **Checkpoint**: User Stories 1 and 2 both work independently and expose the hard-row bottleneck clearly.
 
@@ -94,16 +95,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T023 [P] [US3] Add a failing test that verifies every evaluated row lands in exactly one of the four comparison buckets in `tests/test_v2_2_same_split_eval.py`
-- [ ] T024 [P] [US3] Add a failing test that verifies row-level error outputs contain the required comparison columns in `tests/test_v2_2_same_split_eval.py`
-- [ ] T025 [P] [US3] Add a failing test that verifies the rolling candidate comparison table adds or updates one row per candidate with decision status and section metrics in `tests/test_v2_2_same_split_eval.py`
-- [ ] T026 [P] [US3] Add a failing test that verifies optional detector and image-quality evidence can remain absent without invalidating the comparison contract in `tests/test_v2_2_same_split_eval.py`
+- [X] T024 [P] [US3] Add a failing test that verifies every evaluated row lands in exactly one of the four comparison buckets in `tests/test_v2_2_same_split_eval.py`
+- [X] T025 [P] [US3] Add a failing test that verifies row-level error outputs contain the required comparison columns in `tests/test_v2_2_same_split_eval.py`
+- [X] T026 [P] [US3] Add a failing test that verifies the rolling candidate comparison table adds or updates one row per candidate with decision status, decision reason, and section metrics in `tests/test_v2_2_same_split_eval.py`
+- [X] T027 [P] [US3] Add a failing test that verifies optional detector and image-quality evidence can remain absent without invalidating the comparison contract in `tests/test_v2_2_same_split_eval.py`
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Implement row-level comparison bucket generation and CSV writing in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T028 [US3] Implement rolling candidate comparison table persistence in `src/analysis/v2_2_same_split_eval.py`
-- [ ] T029 [US3] Implement optional-evidence-compatible output handling without changing the locked same-split contract in `src/analysis/v2_2_same_split_eval.py`
+- [X] T028 [US3] Implement row-level comparison bucket generation and CSV writing in `src/analysis/v2_2_same_split_eval.py`
+- [X] T029 [US3] Implement rolling candidate comparison table persistence with decision reason fields in `src/analysis/v2_2_same_split_eval.py`
+- [X] T030 [US3] Implement optional-evidence-compatible output handling without changing the locked same-split contract in `src/analysis/v2_2_same_split_eval.py`
 
 **Checkpoint**: All user stories are independently functional and the feature produces review-ready locked same-split intelligence.
 
@@ -113,11 +114,11 @@
 
 **Purpose**: Final validation, documentation alignment, and full-suite verification.
 
-- [ ] T030 [P] Add quickstart and output-path references for the rolling comparison table to `docs/file-path-index.md` by running `python scripts/update_file_path_index.py`
-- [ ] T031 Validate the quickstart command and expected output paths in `specs/012-locked-same-split-intelligence/quickstart.md`
-- [ ] T032 Run `python -m py_compile src/analysis/v2_2_same_split_eval.py`
-- [ ] T033 Run `python -m pytest tests/test_v2_2_same_split_eval.py -q`
-- [ ] T034 Run `python -m pytest tests -q`
+- [X] T031 [P] Add quickstart and output-path references for the rolling comparison table to `docs/file-path-index.md` by running `python scripts/update_file_path_index.py`
+- [X] T032 Validate the quickstart command and expected output paths in `specs/012-locked-same-split-intelligence/quickstart.md`
+- [X] T033 Run `python -m py_compile src/analysis/v2_2_same_split_eval.py`
+- [X] T034 Run `python -m pytest tests/test_v2_2_same_split_eval.py -q`
+- [X] T035 Run `python -m pytest tests -q`
 
 ---
 
@@ -149,9 +150,9 @@
 
 - T004, T005, and T006 can be written in parallel once the test module exists.
 - T011, T012, and T013 are independent US1 tests.
-- T017, T018, and T019 are independent US2 tests.
-- T023, T024, T025, and T026 are independent US3 tests.
-- T030 and T031 can run in parallel during polish.
+- T017, T018, T019, and T020 are independent US2 tests.
+- T024, T025, T026, and T027 are independent US3 tests.
+- T031 and T032 can run in parallel during polish.
 
 ---
 
@@ -168,7 +169,8 @@ Task: "Add a failing test that verifies the summary JSON records candidate prove
 ```bash
 Task: "Add a failing test that verifies the evaluator produces all three required sections in tests/test_v2_2_same_split_eval.py"
 Task: "Add a failing test that verifies rows are tagged with the correct hard-example type, including overlapping hard-example sources, in tests/test_v2_2_same_split_eval.py"
-Task: "Add a failing test that verifies candidate decision status uses full locked-row improvement plus the 0.01 hard-example regression tolerance in tests/test_v2_2_same_split_eval.py"
+Task: "Add a failing test that verifies accepted requires full locked-row improvement plus no hard-example-only F1 regression beyond 0.01 in tests/test_v2_2_same_split_eval.py"
+Task: "Add a failing test that verifies rejected requires non-improved full locked-row F1 plus hard-example-only regression beyond 0.01, and mixed outcomes become manual_review, in tests/test_v2_2_same_split_eval.py"
 ```
 
 ## Parallel Example: User Story 3
@@ -176,7 +178,7 @@ Task: "Add a failing test that verifies candidate decision status uses full lock
 ```bash
 Task: "Add a failing test that verifies every evaluated row lands in exactly one of the four comparison buckets in tests/test_v2_2_same_split_eval.py"
 Task: "Add a failing test that verifies row-level error outputs contain the required comparison columns in tests/test_v2_2_same_split_eval.py"
-Task: "Add a failing test that verifies the rolling candidate comparison table adds or updates one row per candidate with decision status and section metrics in tests/test_v2_2_same_split_eval.py"
+Task: "Add a failing test that verifies the rolling candidate comparison table adds or updates one row per candidate with decision status, decision reason, and section metrics in tests/test_v2_2_same_split_eval.py"
 Task: "Add a failing test that verifies optional detector and image-quality evidence can remain absent without invalidating the comparison contract in tests/test_v2_2_same_split_eval.py"
 ```
 
@@ -194,7 +196,7 @@ Task: "Add a failing test that verifies optional detector and image-quality evid
 ### Incremental Delivery
 
 1. US1 delivers the valid locked-row comparison and summary.
-2. US2 adds hard-example sectioning and the acceptance/manual-review rule.
+2. US2 adds hard-example sectioning and the explicit accepted/rejected/manual-review rules.
 3. US3 adds row-level review outputs and the rolling candidate comparison table.
 4. Polish adds quickstart alignment, file index refresh, and full-suite verification.
 
