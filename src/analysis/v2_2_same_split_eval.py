@@ -21,6 +21,9 @@ DEFAULT_V2B_VALIDATION_PREDICTIONS = (
     "artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv"
 )
 DEFAULT_OUTPUT_ROOT = Path("outputs/analysis/v2_2_same_split_eval")
+DEFAULT_COMPARISON_TABLE = DEFAULT_OUTPUT_ROOT / "reports" / "candidate_same_split_comparison.csv"
+FIRST_REQUIRED_CANDIDATE_NAME = "v2_2_hard_examples"
+DECISION_STATUSES = ("accepted", "rejected", "manual_review")
 METRIC_COLUMNS = [
     "section",
     "model",
@@ -177,6 +180,10 @@ def _resolve_paths(config: dict[str, object], config_path: str | Path) -> dict[s
             cfg_path, model_cfg.get("threshold_report", str(v22_output_root / "reports" / "best_threshold.json"))
         ),
         "analysis_output_root": analysis_output_root,
+        "comparison_table": _resolve_path(
+            cfg_path,
+            output_cfg.get("rolling_comparison_table", str(DEFAULT_COMPARISON_TABLE)),
+        ),
     }
 
 

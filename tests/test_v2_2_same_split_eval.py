@@ -70,11 +70,25 @@ def _base_setup(tmp_path: Path) -> dict[str, Path]:
                     "validation_split": 0.2,
                     "original_v2b_validation_predictions": str(v2b_predictions),
                 },
-                "output": {"root": str(tmp_path / "outputs" / "kaggle_v2_2" / "v2_2_hard_examples")},
+                "output": {
+                    "root": str(tmp_path / "outputs" / "kaggle_v2_2" / "v2_2_hard_examples"),
+                    "analysis_root": str(tmp_path / "outputs" / "analysis" / "v2_2_same_split_eval"),
+                    "rolling_comparison_table": str(
+                        tmp_path
+                        / "outputs"
+                        / "analysis"
+                        / "v2_2_same_split_eval"
+                        / "reports"
+                        / "candidate_same_split_comparison.csv"
+                    ),
+                },
                 "model": {
+                    "candidate_name": "v2_2_hard_examples",
                     "model_name": "tiny_cnn",
                     "image_size": 384,
                     "num_classes": 2,
+                    "checkpoint": str(checkpoint),
+                    "threshold_report": str(threshold),
                 },
                 "training": {
                     "device": "cpu",
@@ -192,6 +206,26 @@ def test_same_split_eval_writes_required_outputs_and_same_row_metrics(tmp_path, 
     assert summary["submission_created"] is False
     assert summary["v22_threshold"] == pytest.approx(0.42)
     assert summary["recommended_decision"]
+
+
+def test_same_split_config_supports_phase1_setup_keys(tmp_path):
+    from src.analysis.v2_2_same_split_eval import (
+        DEFAULT_COMPARISON_TABLE,
+        FIRST_REQUIRED_CANDIDATE_NAME,
+        load_same_split_config,
+    )
+
+    paths = _base_setup(tmp_path)
+
+    config = load_same_split_config(paths["config"])
+
+    assert config["data"]["original_v2b_validation_predictions"] == str(paths["v2b_predictions"])
+    assert str(config["output"]["analysis_root"]).replace("\\", "/").endswith("outputs/analysis/v2_2_same_split_eval")
+    assert str(config["output"]["rolling_comparison_table"]).replace("\\", "/").endswith(
+        "candidate_same_split_comparison.csv"
+    )
+    assert config["model"]["candidate_name"] == FIRST_REQUIRED_CANDIDATE_NAME
+    assert str(DEFAULT_COMPARISON_TABLE).endswith("candidate_same_split_comparison.csv")
 
 
 def test_same_split_eval_separates_hard_examples_and_error_buckets(tmp_path, monkeypatch):
