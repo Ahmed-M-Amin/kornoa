@@ -99,6 +99,11 @@ def generate_submission(
             artifact_root=resolved_artifacts.artifact_root,
             row_count=len(image_ids),
         )
+    elif _looks_like_v2_submission(artifact_root, output_path):
+        _update_metrics_for_submission(
+            artifact_root=resolved_artifacts.artifact_root,
+            row_count=len(image_ids),
+        )
     return SubmissionReport(output_path=output, row_count=len(image_ids), artifact_root=resolved_artifacts.artifact_root)
 
 
@@ -161,13 +166,26 @@ def export_classifier_test_predictions(
             row_count=len(image_ids),
             test_prediction_distribution=_prediction_distribution_from_test_csv(output),
         )
+    else:
+        _update_metrics_for_submission(
+            artifact_root=resolved_artifacts.artifact_root,
+            row_count=len(image_ids),
+            test_prediction_distribution=_prediction_distribution_from_test_csv(output),
+        )
     return SubmissionReport(output_path=output, row_count=len(image_ids), artifact_root=resolved_artifacts.artifact_root)
 
 
 def _looks_like_v2_submission(artifact_root: str | Path, output_path: str | Path) -> bool:
     root = Path(artifact_root)
     out = Path(output_path)
-    return "kaggle_v2" in root.parts or "kaggle_v2" in out.parts or root == DEFAULT_V2_ARTIFACT_ROOT
+    normalized = f"{root}|{out}".replace("\\", "/").lower()
+    return (
+        "kaggle_v2" in root.parts
+        or "kaggle_v2" in out.parts
+        or root == DEFAULT_V2_ARTIFACT_ROOT
+        or "controlled_phase3" in normalized
+        or "kaggle_phase3" in normalized
+    )
 
 
 def _looks_like_v5_submission(artifact_root: str | Path, output_path: str | Path) -> bool:
@@ -302,6 +320,22 @@ def _update_v5_metrics_for_submission(
     test_prediction_distribution: Optional[dict[str, int]] = None,
 ) -> None:
     metrics_path = artifact_root / V5_METRICS_OUTPUT.relative_to("outputs/kaggle_v5/v5_strong_classifier")
+    if not metrics_path.exists():
+        return
+    payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    payload["submission_row_count"] = row_count
+    if test_prediction_distribution is not None:
+        payload["test_prediction_distribution"] = test_prediction_distribution
+    metrics_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _update_metrics_for_submission(
+    *,
+    artifact_root: Path,
+    row_count: int,
+    test_prediction_distribution: Optional[dict[str, int]] = None,
+) -> None:
+    metrics_path = artifact_root / "reports" / "classifier_metrics.json"
     if not metrics_path.exists():
         return
     payload = json.loads(metrics_path.read_text(encoding="utf-8"))

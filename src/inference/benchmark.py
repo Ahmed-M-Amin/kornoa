@@ -110,7 +110,14 @@ def run_benchmark(
 def _looks_like_v2_benchmark(artifact_root: str | Path, output_path: str | Path) -> bool:
     root = Path(artifact_root)
     out = Path(output_path)
-    return "kaggle_v2" in root.parts or "kaggle_v2" in out.parts or root == DEFAULT_V2_ARTIFACT_ROOT
+    normalized = f"{root}|{out}".replace("\\", "/").lower()
+    return (
+        "kaggle_v2" in root.parts
+        or "kaggle_v2" in out.parts
+        or root == DEFAULT_V2_ARTIFACT_ROOT
+        or "controlled_phase3" in normalized
+        or "kaggle_phase3" in normalized
+    )
 
 
 def _looks_like_v5_benchmark(artifact_root: str | Path, output_path: str | Path) -> bool:

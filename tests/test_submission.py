@@ -137,3 +137,30 @@ def test_submission_cli_smoke(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert output_path.exists()
+
+
+def test_phase3_submission_updates_candidate_metrics(tmp_path):
+    from src.inference.submission import generate_submission
+
+    dataset_root = _make_dataset(tmp_path / "dataset")
+    artifact_root = tmp_path / "outputs" / "kaggle_phase3" / "controlled_phase3"
+    _make_tiny_checkpoint(artifact_root / "models" / "classifier_best.pth")
+    reports = artifact_root / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "best_threshold.json").write_text(json.dumps({"threshold": 0.5}), encoding="utf-8")
+    metrics_path = reports / "classifier_metrics.json"
+    metrics_path.write_text(json.dumps({"f1_score": 0.9}), encoding="utf-8")
+    output_path = artifact_root / "submissions" / "submission_phase3.csv"
+
+    report = generate_submission(
+        dataset_root=dataset_root,
+        artifact_root=artifact_root,
+        output_path=output_path,
+        model_name="tiny_cnn",
+        synthetic_smoke=True,
+        device="cpu",
+    )
+
+    updated_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    assert report.row_count == 2
+    assert updated_metrics["submission_row_count"] == 2
