@@ -1,0 +1,141 @@
+experiment:
+  name: hard_row_visual_review
+  spec: "014"
+  output_root: outputs/analysis/hard_row_visual_review
+
+inputs:
+  hard_row_audit_csv: outputs/analysis/hard_row_quality_audit/audit/hard_row_audit.csv
+  train_images_dir: 1st-krones-vision-ai-challenge/train_images
+  train_csv: 1st-krones-vision-ai-challenge/train.csv
+  bottletypes_csv: 1st-krones-vision-ai-challenge/bottletypes.csv
+  train_annotations_json: 1st-krones-vision-ai-challenge/train_annotations.json
+  baseline_predictions_csv: null
+  candidate_predictions_csv: null
+  embeddings_path: null
+  detector_or_roi_artifacts: null
+
+analysis:
+  expected_hard_row_count: 442
+  image_id_column: image_id
+  target_column: target
+  enable_cleanlab: true
+  cleanlab_optional: true
+  enable_fiftyone: true
+  fiftyone_optional: true
+  enable_clustering: true
+  enable_anomaly_detection: true
+  enable_contact_sheets: true
+  enable_enhanced_views: true
+
+visuals:
+  thumbnail_size: 224
+  max_images_per_contact_sheet: 12
+  generate_original_view: true
+  generate_roi_crop_view: true
+  generate_contrast_enhanced_view: true
+  generate_edge_enhanced_view: true
+  generate_heatmap_view: false
+
+clustering:
+  method: kmeans
+  n_clusters: 8
+  random_state: 42
+
+anomaly:
+  method: isolation_forest
+  contamination: 0.08
+  random_state: 42
+
+review:
+  default_final_failure_mode: unclear_needs_annotation_or_expert_review
+  reviewer_id_default: ""
+  preserve_audit_trail: true
+
+triage:
+  enabled: true
+  output_root: outputs/analysis/hard_row_visual_review
+  cluster_representatives_per_cluster: 8
+  top_n_suspicious: 50
+  top_n_label_issues: 50
+  top_n_anomalies: 50
+  allowed_recommended_actions:
+    - safe_for_hard_training
+    - exclude_as_ambiguous
+    - suspected_mislabel
+    - roi_pipeline_bug
+    - needs_detector_evidence
+    - harmless_artifact_pattern
+    - rare_defect_cluster
+    - needs_expert_review
+  thresholds:
+    high_label_issue_score: 0.75
+    high_anomaly_score: 0.75
+    near_boundary_margin: 0.10
+    high_priority_score: 0.75
+  safety:
+    training_enabled: false
+    submission_enabled: false
+    test_label_usage_enabled: false
+    label_modification_enabled: false
+
+safety:
+  used_test_labels: false
+  training_enabled: false
+  submission_enabled: false
+  leaderboard_tuning_enabled: false
+
+manus_review:
+  enabled: true
+  expected_rows: 442
+  input_dir: outputs/analysis/hard_row_visual_review/manus_review
+  filled_manual_review_template: outputs/analysis/hard_row_visual_review/manus_review/filled_manual_review_template.csv
+  review_summary_json: outputs/analysis/hard_row_visual_review/manus_review/review_summary.json
+  human_verification_priority_list: outputs/analysis/hard_row_visual_review/manus_review/human_verification_priority_list.csv
+  original_manual_review_template: outputs/analysis/hard_row_visual_review/manual_review_template.csv
+  review_manifest: outputs/analysis/hard_row_visual_review/review_manifest.csv
+  cluster_triage_summary: outputs/analysis/hard_row_visual_review/reports/cluster_triage_summary.json
+  cluster_representatives: outputs/analysis/hard_row_visual_review/reports/cluster_representatives.csv
+  top_suspicious_rows: outputs/analysis/hard_row_visual_review/reports/top_suspicious_rows.csv
+  top_label_issue_rows: outputs/analysis/hard_row_visual_review/reports/top_label_issue_rows.csv
+  top_anomaly_rows: outputs/analysis/hard_row_visual_review/reports/top_anomaly_rows.csv
+  high_label_issue_threshold: 0.70
+  high_anomaly_threshold: 0.70
+  allowed_flag_values:
+    - ""
+    - yes
+    - no
+    - unknown
+    - needs_review
+    - label_ok
+    - label_suspicious
+    - not_applicable
+    - possible_label_noise
+    - possible_crop_issue
+    - not_needed
+    - water_drop_or_reflection
+    - none
+    - likely_crop_issue
+
+evidence_completion:
+  enabled: true
+  expected_rows: 442
+  expected_phase3_allowed_count: 422
+  expected_phase3_blocked_count: 20
+  review_manifest: outputs/analysis/hard_row_visual_review/review_manifest.csv
+  manual_review_template: outputs/analysis/hard_row_visual_review/manual_review_template.csv
+  hard_row_audit_csv: outputs/analysis/hard_row_quality_audit/audit/hard_row_audit.csv
+  train_images_dir: 1st-krones-vision-ai-challenge/train_images
+  train_csv: 1st-krones-vision-ai-challenge/train.csv
+  train_annotations_json: 1st-krones-vision-ai-challenge/train_annotations.json
+  bottletypes_csv: 1st-krones-vision-ai-challenge/bottletypes.csv
+  detector_outputs_dir: null
+  output_root: outputs/analysis/hard_row_visual_review
+  evidence_assets_dir: outputs/analysis/hard_row_visual_review/evidence_assets
+  tiny_defect_area_ratio_threshold: 0.01
+  min_roi_coverage_ratio: 0.10
+  max_roi_coverage_ratio: 0.95
+  min_crop_width: 64
+  min_crop_height: 64
+  blur_laplacian_issue_threshold: 40.0
+  low_contrast_issue_threshold: 15.0
+  edge_density_low_threshold: 0.01

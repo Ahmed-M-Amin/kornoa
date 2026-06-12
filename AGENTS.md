@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-specs/012-locked-same-split-intelligence/plan.md
+specs/014-hard-row-technical-triage/plan.md
 <!-- SPECKIT END -->
