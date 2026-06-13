@@ -1,0 +1,52 @@
+experiment:
+  name: cleaned_replay_v2b
+  seed: 42
+
+classifier:
+  v2: true
+  experiment_name: cleaned_replay_v2b
+  model_name: efficientnet_b1
+  image_size: 384
+  num_classes: 2
+  batch_size: 4
+  epochs: 3
+  learning_rate: 0.001
+  weight_decay: 0.01
+  imbalance_strategy: focal_loss_weighted_sampler
+  augmentation_recipe: v2_safe
+  hard_example_strategy: none
+  weighted_sampler: true
+  hard_example_source: auto
+  split_source: v2b_compatible
+
+data:
+  dataset_root: 1st-krones-vision-ai-challenge
+  split_source: v2b_compatible
+
+output:
+  root: outputs/kaggle_v2b_cleaned_replay/cleaned_replay_v2b
+
+benchmark:
+  speed_ceiling_multiplier: 2.0
+
+cleaned_replay:
+  enabled: true
+  approved_manifest_path: outputs/analysis/data_quality_decision_lock/approved_cleaned_training_manifest.csv
+  auto_exclude_rows_path: outputs/analysis/data_quality_decision_lock/auto_exclude_rows.csv
+  needs_adjudication_rows_path: outputs/analysis/data_quality_decision_lock/needs_adjudication_rows.csv
+  deferred_uncertain_rows_path: outputs/analysis/data_quality_decision_lock/deferred_uncertain_rows.csv
+  decision_lock_summary_path: outputs/analysis/data_quality_decision_lock/reports/decision_lock_summary.json
+
+baseline:
+  baseline_name: v2b_locked_baseline
+  baseline_checkpoint_path: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/models/classifier_best.pth
+  locked_baseline_predictions_path: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv
+  locked_baseline_threshold_path: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/reports/best_threshold.json
+  locked_baseline_metrics_path: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/reports/classifier_metrics.json
+  locked_baseline_runtime_report_path: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/benchmarks/v2b_inference_benchmark.json
+
+safety:
+  allow_test_labels: false
+  public_leaderboard_input: false
+  generate_submission: false
+  apply_relabels: false

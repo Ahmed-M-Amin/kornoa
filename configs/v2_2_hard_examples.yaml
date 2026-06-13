@@ -6,15 +6,21 @@ data:
   dataset_root: 1st-krones-vision-ai-challenge
   split_source: v2b_compatible
   validation_split: 0.2
+  original_v2b_validation_predictions: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv
 
 output:
   root: outputs/kaggle_v2_2/v2_2_hard_examples
+  analysis_root: outputs/analysis/v2_2_same_split_eval
+  rolling_comparison_table: outputs/analysis/v2_2_same_split_eval/reports/candidate_same_split_comparison.csv
 
 model:
+  candidate_name: v2_2_hard_examples
   model_name: efficientnet_b1
   image_size: 384
   num_classes: 2
   start_checkpoint: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/models/classifier_best.pth
+  checkpoint: outputs/kaggle_v2_2/v2_2_hard_examples/models/classifier_best.pth
+  threshold_report: outputs/kaggle_v2_2/v2_2_hard_examples/reports/best_threshold.json
 
 training:
   epochs: 4

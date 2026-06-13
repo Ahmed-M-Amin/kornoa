@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import pandas as pd
 import yaml
@@ -21,6 +21,10 @@ DEFAULT_V2B_VALIDATION_PREDICTIONS = (
     "artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv"
 )
 DEFAULT_OUTPUT_ROOT = Path("outputs/analysis/v2_2_same_split_eval")
+DEFAULT_COMPARISON_TABLE = DEFAULT_OUTPUT_ROOT / "reports" / "candidate_same_split_comparison.csv"
+FIRST_REQUIRED_CANDIDATE_NAME = "v2_2_hard_examples"
+DECISION_STATUSES = ("accepted", "rejected", "manual_review")
+HARD_EXAMPLE_F1_TOLERANCE = 0.01
 METRIC_COLUMNS = [
     "section",
     "model",
@@ -37,6 +41,21 @@ METRIC_COLUMNS = [
     "target_0_count",
     "target_1_count",
     "threshold",
+]
+COMPARISON_TABLE_COLUMNS = [
+    "candidate_name",
+    "evaluation_timestamp",
+    "full_locked_row_f1",
+    "hard_example_only_f1",
+    "excluding_hard_example_f1",
+    "full_locked_row_precision",
+    "full_locked_row_recall",
+    "full_locked_row_fp",
+    "full_locked_row_fn",
+    "decision_status",
+    "decision_reason",
+    "hard_example_regression_delta",
+    "report_root",
 ]
 ERROR_COLUMNS = [
     "image_id",
@@ -79,6 +98,7 @@ def load_same_split_config(path: str | Path) -> dict[str, object]:
         raise V22SameSplitEvalError(f"V2.2 config is not valid YAML: {config_path}") from exc
     if not isinstance(payload, dict):
         raise V22SameSplitEvalError("V2.2 config must be a mapping")
+    _validate_candidate_config(payload)
     _validate_safety_config(payload)
     return payload
 
@@ -87,6 +107,7 @@ def run_same_split_evaluation(config_path: str | Path) -> dict[str, Path]:
     config = load_same_split_config(config_path)
     resolved = _resolve_paths(config, config_path)
     _assert_required_inputs_exist(resolved)
+    candidate_name = str(resolved["candidate_name"])
 
     output_root = resolved["analysis_output_root"]
     outputs = {key: output_root.joinpath(*parts) for key, parts in OUTPUT_FILES.items()}
@@ -110,13 +131,15 @@ def run_same_split_evaluation(config_path: str | Path) -> dict[str, Path]:
     combined = v2b_rows.merge(v22_rows, on="image_id", how="inner")
     if len(combined) != len(v2b_rows):
         raise V22SameSplitEvalError("V2.2 inference did not return the same row set as V2B validation predictions")
+    if combined["image_id"].duplicated().any():
+        raise V22SameSplitEvalError("Locked same-split comparison produced duplicate image_id values after alignment")
 
     hard_tags = _load_hard_example_tags(config.get("hard_examples", {}))
     combined = combined.merge(hard_tags, on="image_id", how="left")
     combined["hard_example_type"] = combined["hard_example_type"].fillna("")
     combined["is_hard_example"] = combined["hard_example_type"].astype(str) != ""
 
-    metrics_rows = _build_metrics_rows(combined, threshold)
+    metrics_rows = _build_metrics_rows(combined, threshold, candidate_name=candidate_name)
     pd.DataFrame(metrics_rows, columns=METRIC_COLUMNS).to_csv(outputs["metrics"], index=False)
 
     threshold_sweep = _build_threshold_sweep(combined)
@@ -126,14 +149,26 @@ def run_same_split_evaluation(config_path: str | Path) -> dict[str, Path]:
     for key, frame in error_splits.items():
         frame.to_csv(outputs[key], index=False)
 
+    decision_payload = _build_decision_payload(metrics_rows, candidate_name=candidate_name)
+    _update_comparison_table(
+        resolved["comparison_table"],
+        candidate_name=candidate_name,
+        decision_payload=decision_payload,
+        metrics_rows=metrics_rows,
+        report_root=output_root,
+    )
+
     summary = _build_summary(
         config=config,
         resolved=resolved,
+        config_path=Path(config_path),
         threshold=threshold,
         metrics_rows=metrics_rows,
         combined=combined,
+        decision_payload=decision_payload,
     )
     outputs["summary"].write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    outputs["comparison_table"] = resolved["comparison_table"]
     return outputs
 
 
@@ -148,11 +183,34 @@ def _validate_safety_config(config: dict[str, object]) -> None:
     prediction_path = str((config.get("data") or {}).get("original_v2b_validation_predictions", "")).lower()
     if "sample_submission" in prediction_path or "test" in Path(prediction_path).name:
         raise V22SameSplitEvalError("V2.2 same-split evaluation cannot use test labels or submission labels")
+    output_cfg = dict(config.get("output") or {})
+    analysis_root = str(output_cfg.get("analysis_root", "")).lower().replace("\\", "/")
+    if analysis_root and "/analysis" not in analysis_root and not analysis_root.endswith("analysis"):
+        raise V22SameSplitEvalError("V2.2 same-split evaluation requires an analysis output root under outputs/analysis")
+    if any(part in {"submission", "submissions"} for part in Path(analysis_root).parts):
+        raise V22SameSplitEvalError("V2.2 same-split evaluation analysis output cannot point to submission paths")
     metrics = dict(config.get("metrics") or {})
     if int(metrics.get("positive_class", 1)) != 1:
         raise V22SameSplitEvalError("V2.2 same-split evaluation requires positive_class=1")
     if int(metrics.get("zero_division", 0)) != 0:
         raise V22SameSplitEvalError("V2.2 same-split evaluation requires zero_division=0")
+
+
+def _validate_candidate_config(config: dict[str, object]) -> None:
+    model_cfg = dict(config.get("model") or {})
+    candidate_cfg = dict(config.get("candidate") or {})
+    candidate_name = str(model_cfg.get("candidate_name", candidate_cfg.get("name", ""))).strip()
+    if not candidate_name:
+        raise V22SameSplitEvalError("V2.2 same-split evaluation requires model.candidate_name")
+    candidate_names = list(model_cfg.get("candidate_names") or [])
+    if candidate_names and len(candidate_names) != 1:
+        raise V22SameSplitEvalError("V2.2 same-split evaluation supports one candidate per run")
+    if not str(model_cfg.get("checkpoint", "")).strip():
+        raise V22SameSplitEvalError("V2.2 same-split evaluation requires model.checkpoint for candidate provenance")
+    if not str(model_cfg.get("threshold_report", "")).strip():
+        raise V22SameSplitEvalError(
+            "V2.2 same-split evaluation requires model.threshold_report for candidate provenance"
+        )
 
 
 def _resolve_paths(config: dict[str, object], config_path: str | Path) -> dict[str, Path]:
@@ -177,6 +235,11 @@ def _resolve_paths(config: dict[str, object], config_path: str | Path) -> dict[s
             cfg_path, model_cfg.get("threshold_report", str(v22_output_root / "reports" / "best_threshold.json"))
         ),
         "analysis_output_root": analysis_output_root,
+        "comparison_table": _resolve_path(
+            cfg_path,
+            output_cfg.get("rolling_comparison_table", str(DEFAULT_COMPARISON_TABLE)),
+        ),
+        "candidate_name": str(model_cfg.get("candidate_name", FIRST_REQUIRED_CANDIDATE_NAME)).strip(),
     }
 
 
@@ -233,6 +296,8 @@ def _load_v2b_validation_rows(path: str | Path, *, dataset_root: Path) -> pd.Dat
         raise V22SameSplitEvalError("V2B validation predictions contain duplicate image_id values")
     if not set(normalized["target"]).issubset({0, 1}):
         raise V22SameSplitEvalError("V2B validation targets must be binary")
+    if not set(normalized["v2b_prediction"]).issubset({0, 1}):
+        raise V22SameSplitEvalError("V2B validation predictions must be binary")
     return normalized
 
 
@@ -319,7 +384,7 @@ def _load_hard_example_tags(raw_cfg: object) -> pd.DataFrame:
     )
 
 
-def _build_metrics_rows(combined: pd.DataFrame, threshold: float) -> list[dict[str, object]]:
+def _build_metrics_rows(combined: pd.DataFrame, threshold: float, *, candidate_name: str) -> list[dict[str, object]]:
     sections = {
         "all_original_v2b_validation_rows": combined,
         "hard_example_rows_only": combined.loc[combined["is_hard_example"]],
@@ -410,30 +475,113 @@ def _build_error_splits(combined: pd.DataFrame) -> dict[str, pd.DataFrame]:
     }
 
 
+def _metric_row(metrics_rows: list[dict[str, object]], section: str, model: str) -> dict[str, object]:
+    for row in metrics_rows:
+        if row["section"] == section and row["model"] == model:
+            return row
+    raise V22SameSplitEvalError(f"Missing metrics row for section={section} model={model}")
+
+
+def _build_decision_payload(metrics_rows: list[dict[str, object]], *, candidate_name: str) -> dict[str, object]:
+    all_v2b = _metric_row(metrics_rows, "all_original_v2b_validation_rows", "v2b")
+    all_candidate = _metric_row(metrics_rows, "all_original_v2b_validation_rows", "v2_2")
+    hard_v2b = _metric_row(metrics_rows, "hard_example_rows_only", "v2b")
+    hard_candidate = _metric_row(metrics_rows, "hard_example_rows_only", "v2_2")
+    hard_delta = float(hard_candidate["f1"]) - float(hard_v2b["f1"])
+    full_delta = float(all_candidate["f1"]) - float(all_v2b["f1"])
+
+    if full_delta > 0 and hard_delta >= -HARD_EXAMPLE_F1_TOLERANCE:
+        status = "accepted"
+        reason = "full locked-row F1 improved and hard-example-only F1 stayed within tolerance"
+    elif full_delta <= 0 and hard_delta < -HARD_EXAMPLE_F1_TOLERANCE:
+        status = "rejected"
+        reason = "full locked-row F1 did not improve and hard-example-only F1 regressed beyond tolerance"
+    else:
+        status = "manual_review"
+        reason = "locked same-split evidence is mixed across full-row and hard-example sections"
+
+    return {
+        "candidate_name": candidate_name,
+        "decision_status": status,
+        "decision_reason": reason,
+        "full_locked_row_f1_delta": full_delta,
+        "hard_example_regression_delta": hard_delta,
+        "all_v2b": all_v2b,
+        "all_candidate": all_candidate,
+        "hard_v2b": hard_v2b,
+        "hard_candidate": hard_candidate,
+        "clean_candidate": _metric_row(metrics_rows, "original_v2b_validation_excluding_hard_examples", "v2_2"),
+    }
+
+
+def _update_comparison_table(
+    path: Path,
+    *,
+    candidate_name: str,
+    decision_payload: dict[str, object],
+    metrics_rows: list[dict[str, object]],
+    report_root: Path,
+) -> None:
+    candidate_row = _metric_row(metrics_rows, "all_original_v2b_validation_rows", "v2_2")
+    clean_row = _metric_row(metrics_rows, "original_v2b_validation_excluding_hard_examples", "v2_2")
+    hard_row = _metric_row(metrics_rows, "hard_example_rows_only", "v2_2")
+    record = {
+        "candidate_name": candidate_name,
+        "evaluation_timestamp": pd.Timestamp.utcnow().isoformat(),
+        "full_locked_row_f1": float(candidate_row["f1"]),
+        "hard_example_only_f1": float(hard_row["f1"]),
+        "excluding_hard_example_f1": float(clean_row["f1"]),
+        "full_locked_row_precision": float(candidate_row["precision"]),
+        "full_locked_row_recall": float(candidate_row["recall"]),
+        "full_locked_row_fp": int(candidate_row["fp"]),
+        "full_locked_row_fn": int(candidate_row["fn"]),
+        "decision_status": str(decision_payload["decision_status"]),
+        "decision_reason": str(decision_payload["decision_reason"]),
+        "hard_example_regression_delta": float(decision_payload["hard_example_regression_delta"]),
+        "report_root": str(report_root),
+    }
+
+    if path.exists():
+        frame = pd.read_csv(path)
+    else:
+        frame = pd.DataFrame(columns=COMPARISON_TABLE_COLUMNS)
+    frame = frame.loc[frame["candidate_name"] != candidate_name] if not frame.empty else frame
+    if frame.empty:
+        frame = pd.DataFrame([record], columns=COMPARISON_TABLE_COLUMNS)
+    else:
+        frame = pd.concat([frame, pd.DataFrame([record])], ignore_index=True)
+    frame = frame[COMPARISON_TABLE_COLUMNS]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(path, index=False)
+
+
 def _build_summary(
     *,
     config: dict[str, object],
     resolved: dict[str, Path],
+    config_path: Path,
     threshold: float,
     metrics_rows: list[dict[str, object]],
     combined: pd.DataFrame,
+    decision_payload: dict[str, object],
 ) -> dict[str, object]:
     metrics_by_section: dict[str, dict[str, dict[str, object]]] = {}
     for row in metrics_rows:
         metrics_by_section.setdefault(str(row["section"]), {})[str(row["model"])] = row
-    all_v2b = metrics_by_section["all_original_v2b_validation_rows"]["v2b"]
-    all_v22 = metrics_by_section["all_original_v2b_validation_rows"]["v2_2"]
-    recommended_decision = (
-        "same_split_pass_pending_manual_review"
-        if float(all_v22["f1"]) >= float(all_v2b["f1"])
-        else "hold_submission_v22_underperforms_v2b_on_locked_split"
-    )
     return {
         "evaluation_mode": "validation_only_same_split",
         "used_test_labels": False,
         "trained_model": False,
         "submission_created": False,
+        "run_manifest": {
+            "config_path": str(config_path),
+            "analysis_output_root": str(resolved["analysis_output_root"]),
+            "comparison_table_path": str(resolved["comparison_table"]),
+            "candidate_name": str(resolved["candidate_name"]),
+        },
         "v2b_prediction_file": str(resolved["v2b_predictions"]),
+        "candidate_checkpoint": str(resolved["v22_checkpoint"]),
+        "candidate_threshold_report": str(resolved["v22_threshold"]),
         "v22_checkpoint": str(resolved["v22_checkpoint"]),
         "v22_threshold": float(threshold),
         "hard_example_files": {
@@ -442,7 +590,10 @@ def _build_summary(
             "uncertain_examples": str((config.get("hard_examples") or {}).get("uncertain_examples", "")),
         },
         "sections": metrics_by_section,
-        "recommended_decision": recommended_decision,
+        "recommended_decision": str(decision_payload["decision_status"]),
+        "decision_status": str(decision_payload["decision_status"]),
+        "decision_reason": str(decision_payload["decision_reason"]),
+        "comparison_table_path": str(resolved["comparison_table"]),
         "row_count": int(len(combined)),
     }
 

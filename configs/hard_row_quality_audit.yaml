@@ -1,0 +1,23 @@
+experiment:
+  name: hard_row_quality_audit
+  seed: 42
+
+data:
+  hard_negatives: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_candidate_hard_negatives_all.csv
+  hard_positives: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_candidate_hard_positives_all.csv
+  uncertain_examples: outputs/analysis/v2_1_error_intelligence/fiftyone_review/v2_2_uncertain_examples_all.csv
+  validation_predictions: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv
+
+evidence:
+  detector: ""
+  image_quality: ""
+
+output:
+  analysis_root: outputs/analysis/hard_row_quality_audit
+
+safety:
+  allow_test_labels: false
+  public_leaderboard_input: false
+  generate_submission: false
+  train_model: false
+  apply_relabels: false

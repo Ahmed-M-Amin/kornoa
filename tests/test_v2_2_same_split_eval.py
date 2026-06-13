@@ -70,11 +70,25 @@ def _base_setup(tmp_path: Path) -> dict[str, Path]:
                     "validation_split": 0.2,
                     "original_v2b_validation_predictions": str(v2b_predictions),
                 },
-                "output": {"root": str(tmp_path / "outputs" / "kaggle_v2_2" / "v2_2_hard_examples")},
+                "output": {
+                    "root": str(tmp_path / "outputs" / "kaggle_v2_2" / "v2_2_hard_examples"),
+                    "analysis_root": str(tmp_path / "outputs" / "analysis" / "v2_2_same_split_eval"),
+                    "rolling_comparison_table": str(
+                        tmp_path
+                        / "outputs"
+                        / "analysis"
+                        / "v2_2_same_split_eval"
+                        / "reports"
+                        / "candidate_same_split_comparison.csv"
+                    ),
+                },
                 "model": {
+                    "candidate_name": "v2_2_hard_examples",
                     "model_name": "tiny_cnn",
                     "image_size": 384,
                     "num_classes": 2,
+                    "checkpoint": str(checkpoint),
+                    "threshold_report": str(threshold),
                 },
                 "training": {
                     "device": "cpu",
@@ -192,6 +206,56 @@ def test_same_split_eval_writes_required_outputs_and_same_row_metrics(tmp_path, 
     assert summary["submission_created"] is False
     assert summary["v22_threshold"] == pytest.approx(0.42)
     assert summary["recommended_decision"]
+    assert summary["decision_status"] in {"accepted", "rejected", "manual_review"}
+    assert summary["candidate_checkpoint"].endswith("classifier_best.pth")
+    assert summary["candidate_threshold_report"].endswith("best_threshold.json")
+    assert summary["comparison_table_path"].endswith("candidate_same_split_comparison.csv")
+
+
+def test_same_split_eval_normalizes_locked_row_identity_before_alignment(tmp_path, monkeypatch):
+    from src.analysis.v2_2_same_split_eval import run_same_split_evaluation
+
+    paths = _base_setup(tmp_path)
+    _write_csv(
+        paths["v2b_predictions"],
+        [
+            {"image_id": "nested/a.jpg", "true_label": 1, "probability": 0.90, "predicted_label": 1, "threshold": 0.42},
+            {"image_id": "nested\\b.jpg", "true_label": 0, "probability": 0.70, "predicted_label": 1, "threshold": 0.42},
+            {"image_id": "./c.jpg", "true_label": 1, "probability": 0.40, "predicted_label": 0, "threshold": 0.42},
+            {"image_id": "d.jpg", "true_label": 0, "probability": 0.20, "predicted_label": 0, "threshold": 0.42},
+        ],
+    )
+    _patch_inference(monkeypatch)
+
+    outputs = run_same_split_evaluation(paths["config"])
+    metrics = pd.read_csv(outputs["metrics"])
+    summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
+
+    all_v2b = metrics.loc[
+        (metrics["section"] == "all_original_v2b_validation_rows") & (metrics["model"] == "v2b")
+    ].iloc[0]
+    assert all_v2b["row_count"] == 4
+    assert summary["row_count"] == 4
+
+
+def test_same_split_config_supports_phase1_setup_keys(tmp_path):
+    from src.analysis.v2_2_same_split_eval import (
+        DEFAULT_COMPARISON_TABLE,
+        FIRST_REQUIRED_CANDIDATE_NAME,
+        load_same_split_config,
+    )
+
+    paths = _base_setup(tmp_path)
+
+    config = load_same_split_config(paths["config"])
+
+    assert config["data"]["original_v2b_validation_predictions"] == str(paths["v2b_predictions"])
+    assert str(config["output"]["analysis_root"]).replace("\\", "/").endswith("outputs/analysis/v2_2_same_split_eval")
+    assert str(config["output"]["rolling_comparison_table"]).replace("\\", "/").endswith(
+        "candidate_same_split_comparison.csv"
+    )
+    assert config["model"]["candidate_name"] == FIRST_REQUIRED_CANDIDATE_NAME
+    assert str(DEFAULT_COMPARISON_TABLE).endswith("candidate_same_split_comparison.csv")
 
 
 def test_same_split_eval_separates_hard_examples_and_error_buckets(tmp_path, monkeypatch):
@@ -219,6 +283,113 @@ def test_same_split_eval_separates_hard_examples_and_error_buckets(tmp_path, mon
     assert both_correct["image_id"].tolist() == ["a.jpg", "d.jpg"]
     assert set(improved["is_hard_example"]) == {True}
     assert set(both_correct["hard_example_type"].fillna("")) == {"", "uncertain"}
+
+
+def test_same_split_eval_preserves_overlapping_hard_example_types(tmp_path, monkeypatch):
+    from src.analysis.v2_2_same_split_eval import run_same_split_evaluation
+
+    paths = _base_setup(tmp_path)
+    _write_csv(
+        paths["uncertain"],
+        [
+            {"image_id": "c.jpg"},
+        ],
+    )
+    _patch_inference(monkeypatch)
+
+    outputs = run_same_split_evaluation(paths["config"])
+    improved = pd.read_csv(outputs["v2b_wrong_v22_correct"])
+
+    overlap_row = improved.loc[improved["image_id"] == "c.jpg"].iloc[0]
+    assert overlap_row["hard_example_type"] == "hard_positive,uncertain"
+
+
+def test_same_split_eval_sets_accepted_when_full_score_improves_and_hard_rows_stay_within_tolerance(tmp_path, monkeypatch):
+    from src.analysis.v2_2_same_split_eval import run_same_split_evaluation
+
+    paths = _base_setup(tmp_path)
+    _patch_inference(monkeypatch)
+
+    summary = json.loads(run_same_split_evaluation(paths["config"])["summary"].read_text(encoding="utf-8"))
+
+    assert summary["decision_status"] == "accepted"
+    assert "within tolerance" in summary["decision_reason"]
+
+
+def test_same_split_eval_sets_manual_review_for_mixed_outcomes(tmp_path, monkeypatch):
+    from src.analysis import v2_2_same_split_eval
+
+    paths = _base_setup(tmp_path)
+    _write_csv(
+        paths["hard_negatives"],
+        [{"image_id": "b.jpg", "error_type": "FP", "true_label": 0, "v2b_prediction": 1}],
+    )
+    paths["hard_positives"].write_text("image_id,error_type,true_label,v2b_prediction\n", encoding="utf-8")
+    _write_csv(paths["uncertain"], [{"image_id": "a.jpg"}])
+
+    def _mixed_infer(*, image_paths: list[Path], threshold: float, **_: object) -> pd.DataFrame:
+        lookup = {
+            "a.jpg": 0.10,
+            "b.jpg": 0.30,
+            "c.jpg": 0.60,
+            "d.jpg": 0.10,
+        }
+        rows = []
+        for image_path in image_paths:
+            probability = lookup[image_path.name]
+            rows.append(
+                {
+                    "image_id": image_path.name,
+                    "v22_probability": probability,
+                    "v22_prediction": int(probability >= threshold),
+                    "v22_threshold": threshold,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(v2_2_same_split_eval, "_infer_v22_predictions", _mixed_infer)
+    summary = json.loads(v2_2_same_split_eval.run_same_split_evaluation(paths["config"])["summary"].read_text(encoding="utf-8"))
+
+    assert summary["decision_status"] == "manual_review"
+    assert "mixed" in summary["decision_reason"]
+
+
+def test_same_split_eval_sets_rejected_for_non_improved_full_score_and_hard_regression(tmp_path, monkeypatch):
+    from src.analysis import v2_2_same_split_eval
+
+    paths = _base_setup(tmp_path)
+    _write_csv(
+        paths["hard_negatives"],
+        [{"image_id": "b.jpg", "error_type": "FP", "true_label": 0, "v2b_prediction": 1}],
+    )
+    paths["hard_positives"].write_text("image_id,error_type,true_label,v2b_prediction\n", encoding="utf-8")
+    _write_csv(paths["uncertain"], [{"image_id": "a.jpg"}])
+
+    def _rejected_infer(*, image_paths: list[Path], threshold: float, **_: object) -> pd.DataFrame:
+        lookup = {
+            "a.jpg": 0.10,
+            "b.jpg": 0.30,
+            "c.jpg": 0.20,
+            "d.jpg": 0.10,
+        }
+        rows = []
+        for image_path in image_paths:
+            probability = lookup[image_path.name]
+            rows.append(
+                {
+                    "image_id": image_path.name,
+                    "v22_probability": probability,
+                    "v22_prediction": int(probability >= threshold),
+                    "v22_threshold": threshold,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(v2_2_same_split_eval, "_infer_v22_predictions", _rejected_infer)
+    summary = json.loads(v2_2_same_split_eval.run_same_split_evaluation(paths["config"])["summary"].read_text(encoding="utf-8"))
+
+    assert summary["decision_status"] == "rejected"
+    assert "did not improve" in summary["decision_reason"]
 
 
 def test_same_split_eval_uses_binary_f1_with_positive_class_1_and_zero_division_0(tmp_path, monkeypatch):
@@ -289,6 +460,101 @@ def test_same_split_eval_rejects_training_submission_and_test_label_modes(tmp_pa
         load_same_split_config(paths["config"])
 
 
+def test_same_split_eval_rejects_training_and_non_analysis_output_roots(tmp_path):
+    from src.analysis.v2_2_same_split_eval import V22SameSplitEvalError, load_same_split_config
+
+    paths = _base_setup(tmp_path)
+    payload = yaml.safe_load(paths["config"].read_text(encoding="utf-8"))
+    payload["safety"]["train_model"] = True
+    paths["config"].write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises(V22SameSplitEvalError, match="forbids training"):
+        load_same_split_config(paths["config"])
+
+    payload["safety"]["train_model"] = False
+    payload["output"]["analysis_root"] = str(tmp_path / "outputs" / "submissions")
+    paths["config"].write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises(V22SameSplitEvalError, match="analysis output"):
+        load_same_split_config(paths["config"])
+
+
+def test_same_split_eval_rejects_duplicate_or_non_binary_locked_rows(tmp_path):
+    from src.analysis.v2_2_same_split_eval import V22SameSplitEvalError, run_same_split_evaluation
+
+    duplicate_paths = _base_setup(tmp_path / "duplicate_case")
+    _write_csv(
+        duplicate_paths["v2b_predictions"],
+        [
+            {"image_id": "a.jpg", "true_label": 1, "probability": 0.90, "predicted_label": 1, "threshold": 0.42},
+            {"image_id": "a.jpg", "true_label": 1, "probability": 0.70, "predicted_label": 1, "threshold": 0.42},
+        ],
+    )
+
+    with pytest.raises(V22SameSplitEvalError, match="duplicate image_id"):
+        run_same_split_evaluation(duplicate_paths["config"])
+
+    non_binary_paths = _base_setup(tmp_path / "non_binary_case")
+    _write_csv(
+        non_binary_paths["v2b_predictions"],
+        [
+            {"image_id": "a.jpg", "true_label": 2, "probability": 0.90, "predicted_label": 1, "threshold": 0.42},
+            {"image_id": "b.jpg", "true_label": 0, "probability": 0.20, "predicted_label": 0, "threshold": 0.42},
+        ],
+    )
+
+    with pytest.raises(V22SameSplitEvalError, match="targets must be binary"):
+        run_same_split_evaluation(non_binary_paths["config"])
+
+
+def test_same_split_eval_rejects_row_count_mismatch_after_normalization(tmp_path, monkeypatch):
+    from src.analysis import v2_2_same_split_eval
+
+    paths = _base_setup(tmp_path)
+
+    def _mismatched_infer(*, image_paths: list[Path], threshold: float, **_: object) -> pd.DataFrame:
+        rows = []
+        for image_path in image_paths[:-1]:
+            rows.append(
+                {
+                    "image_id": image_path.name,
+                    "v22_probability": 0.5,
+                    "v22_prediction": int(0.5 >= threshold),
+                    "v22_threshold": threshold,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(v2_2_same_split_eval, "_infer_v22_predictions", _mismatched_infer)
+
+    with pytest.raises(v2_2_same_split_eval.V22SameSplitEvalError, match="same row set"):
+        v2_2_same_split_eval.run_same_split_evaluation(paths["config"])
+
+
+def test_same_split_config_enforces_one_candidate_and_required_candidate_provenance(tmp_path):
+    from src.analysis.v2_2_same_split_eval import FIRST_REQUIRED_CANDIDATE_NAME, V22SameSplitEvalError, load_same_split_config
+
+    paths = _base_setup(tmp_path)
+    payload = yaml.safe_load(paths["config"].read_text(encoding="utf-8"))
+
+    payload["model"]["candidate_name"] = ""
+    paths["config"].write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(V22SameSplitEvalError, match="candidate_name"):
+        load_same_split_config(paths["config"])
+
+    payload["model"]["candidate_name"] = FIRST_REQUIRED_CANDIDATE_NAME
+    payload["model"]["candidate_names"] = ["v2_2_hard_examples", "v2_3_candidate"]
+    paths["config"].write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(V22SameSplitEvalError, match="one candidate per run"):
+        load_same_split_config(paths["config"])
+
+    payload.pop("model", None)
+    payload["candidate"] = {"name": FIRST_REQUIRED_CANDIDATE_NAME}
+    paths["config"].write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(V22SameSplitEvalError, match="checkpoint"):
+        load_same_split_config(paths["config"])
+
+
 def test_same_split_eval_cli_reports_expected_errors_without_traceback(tmp_path, capsys):
     from src.analysis.v2_2_same_split_eval import main
 
@@ -301,3 +567,94 @@ def test_same_split_eval_cli_reports_expected_errors_without_traceback(tmp_path,
     assert exit_code == 2
     assert "failed" in captured.err.lower()
     assert "traceback" not in captured.err.lower()
+
+
+def test_same_split_eval_writes_exhaustive_bucket_outputs_with_required_columns(tmp_path, monkeypatch):
+    from src.analysis.v2_2_same_split_eval import ERROR_COLUMNS, run_same_split_evaluation
+
+    paths = _base_setup(tmp_path)
+    _patch_inference(monkeypatch)
+
+    outputs = run_same_split_evaluation(paths["config"])
+    bucket_frames = [
+        pd.read_csv(outputs["v2b_wrong_v22_correct"]),
+        pd.read_csv(outputs["v2b_correct_v22_wrong"]),
+        pd.read_csv(outputs["both_wrong"]),
+        pd.read_csv(outputs["both_correct"]),
+    ]
+
+    assert sum(len(frame) for frame in bucket_frames) == 4
+    for frame in bucket_frames:
+        assert list(frame.columns) == ERROR_COLUMNS
+
+
+def test_same_split_eval_updates_rolling_comparison_table_per_candidate(tmp_path, monkeypatch):
+    from src.analysis import v2_2_same_split_eval
+
+    paths = _base_setup(tmp_path)
+    _patch_inference(monkeypatch)
+
+    first_outputs = v2_2_same_split_eval.run_same_split_evaluation(paths["config"])
+    table_path = first_outputs["comparison_table"]
+    first_table = pd.read_csv(table_path)
+    assert first_table["candidate_name"].tolist() == ["v2_2_hard_examples"]
+    assert "decision_reason" in first_table.columns
+
+    payload = yaml.safe_load(paths["config"].read_text(encoding="utf-8"))
+    payload["model"]["candidate_name"] = "v2_3_candidate"
+    second_checkpoint = tmp_path / "outputs" / "kaggle_v2_3" / "v2_3_candidate" / "models" / "classifier_best.pth"
+    second_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    second_checkpoint.write_bytes(b"fake-checkpoint")
+    second_threshold = _write_json(
+        tmp_path / "outputs" / "kaggle_v2_3" / "v2_3_candidate" / "reports" / "best_threshold.json",
+        {"threshold": 0.42},
+    )
+    payload["model"]["checkpoint"] = str(second_checkpoint)
+    payload["model"]["threshold_report"] = str(second_threshold)
+    paths["config"].write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    second_outputs = v2_2_same_split_eval.run_same_split_evaluation(paths["config"])
+    second_table = pd.read_csv(second_outputs["comparison_table"])
+    assert set(second_table["candidate_name"]) == {"v2_2_hard_examples", "v2_3_candidate"}
+    _write_csv(
+        paths["hard_negatives"],
+        [{"image_id": "b.jpg", "error_type": "FP", "true_label": 0, "v2b_prediction": 1}],
+    )
+    paths["hard_positives"].write_text("image_id,error_type,true_label,v2b_prediction\n", encoding="utf-8")
+    _write_csv(paths["uncertain"], [{"image_id": "a.jpg"}])
+
+    def _manual_review_infer(*, image_paths: list[Path], threshold: float, **_: object) -> pd.DataFrame:
+        lookup = {
+            "a.jpg": 0.10,
+            "b.jpg": 0.30,
+            "c.jpg": 0.60,
+            "d.jpg": 0.10,
+        }
+        return pd.DataFrame(
+            {
+                "image_id": [path.name for path in image_paths],
+                "v22_probability": [lookup[path.name] for path in image_paths],
+                "v22_prediction": [int(lookup[path.name] >= threshold) for path in image_paths],
+                "v22_threshold": [threshold for _ in image_paths],
+            }
+        )
+
+    monkeypatch.setattr(v2_2_same_split_eval, "_infer_v22_predictions", _manual_review_infer)
+    v2_2_same_split_eval.run_same_split_evaluation(paths["config"])
+    updated_table = pd.read_csv(table_path)
+    updated_row = updated_table.loc[updated_table["candidate_name"] == "v2_3_candidate"].iloc[0]
+    assert updated_row["decision_status"] == "manual_review"
+    assert len(updated_table) == 2
+
+
+def test_same_split_eval_succeeds_without_optional_evidence_inputs(tmp_path, monkeypatch):
+    from src.analysis.v2_2_same_split_eval import run_same_split_evaluation
+
+    paths = _base_setup(tmp_path)
+    payload = yaml.safe_load(paths["config"].read_text(encoding="utf-8"))
+    payload["evidence"] = {"detector": "", "image_quality": ""}
+    paths["config"].write_text(yaml.safe_dump(payload), encoding="utf-8")
+    _patch_inference(monkeypatch)
+
+    outputs = run_same_split_evaluation(paths["config"])
+    assert outputs["summary"].exists()

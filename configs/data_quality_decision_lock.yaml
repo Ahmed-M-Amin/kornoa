@@ -1,0 +1,43 @@
+experiment:
+  name: data_quality_decision_lock
+  seed: 42
+
+inputs:
+  spec016_master_path: outputs/analysis/data_quality_audit/data_quality_master.csv
+  spec016_cleaned_manifest_path: outputs/analysis/data_quality_audit/cleaned_training_manifest.csv
+  spec016_manual_review_required_path: outputs/analysis/data_quality_audit/manual_review_required_rows.csv
+  spec016_review_template_path: outputs/analysis/data_quality_audit/review_decision_template.csv
+  spec016_summary_path: outputs/analysis/data_quality_audit/reports/data_quality_summary.json
+  spec016_exclusion_reasons_path: outputs/analysis/data_quality_audit/reports/exclusion_reason_counts.csv
+  spec014_allowed_hard_rows_path: outputs/analysis/hard_row_visual_review/reports/phase3_allowed_hard_training_rows.csv
+  spec014_blocked_roi_pipeline_bug_rows_path: outputs/analysis/hard_row_visual_review/reports/blocked_roi_pipeline_bug_rows.csv
+  spec014_blocked_suspected_mislabel_rows_path: outputs/analysis/hard_row_visual_review/reports/blocked_suspected_mislabel_rows.csv
+  spec014_blocked_other_high_risk_rows_path: outputs/analysis/hard_row_visual_review/reports/blocked_other_high_risk_rows.csv
+
+optional_evidence:
+  oof_predictions_path: outputs/analysis/data_quality_audit/oof_train_predictions.csv
+  v2b_predictions_path: artifacts/kaggle_v2b_artifacts/kaggle_v2/v2b_effnet_b1/kaggle_v2/predictions/val_classifier_predictions.csv
+  image_embeddings_path: outputs/analysis/data_quality_audit/image_embeddings.csv
+  cleanlab_scores_path: ""
+  cluster_assignments_path: ""
+
+dataset:
+  train_csv_path: 1st-krones-vision-ai-challenge/train.csv
+  train_images_dir: 1st-krones-vision-ai-challenge/train_images
+
+output:
+  analysis_root: outputs/analysis/data_quality_decision_lock
+
+quality:
+  label_issue_threshold: 0.80
+  prediction_high_risk_threshold: 0.75
+  prediction_critical_risk_threshold: 0.90
+  contact_sheet_limit: 64
+  adjudication_queue_limit: 800
+
+safety:
+  allow_test_labels: false
+  public_leaderboard_input: false
+  generate_submission: false
+  train_model: false
+  apply_relabels: false

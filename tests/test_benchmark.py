@@ -107,3 +107,29 @@ def test_benchmark_cli_smoke(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert output_path.exists()
+
+
+def test_phase3_artifact_root_uses_v2_resolution_and_preserves_benchmark_reference(tmp_path):
+    from src.inference.benchmark import run_benchmark
+
+    artifact_root = tmp_path / "outputs" / "kaggle_phase3" / "controlled_phase3"
+    _make_tiny_checkpoint(artifact_root / "models" / "classifier_best.pth")
+    reports = artifact_root / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "best_threshold.json").write_text(json.dumps({"threshold": 0.5}), encoding="utf-8")
+    (reports / "classifier_metrics.json").write_text(json.dumps({"f1_score": 0.9}), encoding="utf-8")
+    image_dir = _make_image_dir(tmp_path, count=2)
+    output_path = artifact_root / "benchmarks" / "runtime_report.json"
+
+    report = run_benchmark(
+        image_dir=image_dir,
+        artifact_root=artifact_root,
+        output_path=output_path,
+        model_name="tiny_cnn",
+        synthetic_smoke=True,
+        device="cpu",
+    )
+
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report.artifact_root == str(artifact_root)
+    assert saved["artifact_root"] == str(artifact_root)
