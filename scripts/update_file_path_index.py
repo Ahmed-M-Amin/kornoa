@@ -216,6 +216,20 @@ def describe_path(path: Path, *, is_dir: bool) -> str:
         return "Python dependency list."
     if path.name == ".gitignore":
         return "Git ignore rules."
+    if path.as_posix() == "configs/data_quality_audit.yaml":
+        return "YAML configuration for the controlled data quality audit workflow."
+    if path.as_posix() == "configs/data_quality_decision_lock.yaml":
+        return "YAML configuration for the Spec 017 decision-lock workflow."
+    if path.as_posix() == "configs/v2b_cleaned_replay_training.yaml":
+        return "YAML configuration for the Spec 018 V2B-style cleaned replay training workflow."
+    if path.as_posix() == "src/analysis/data_quality_audit.py":
+        return "Python source file for the controlled data quality audit workflow."
+    if path.as_posix() == "src/analysis/data_quality_decision_lock.py":
+        return "Python source file for the Spec 017 decision-lock workflow."
+    if path.as_posix() == "tests/test_data_quality_decision_lock.py":
+        return "Pytest coverage for the Spec 017 decision-lock workflow."
+    if path.as_posix() == "tests/test_v2b_cleaned_replay_training.py":
+        return "Pytest coverage for the Spec 018 cleaned replay dry-run, training, and comparison workflow."
     if path.suffix == ".py":
         return "Python source file."
     if path.suffix in {".yaml", ".yml"}:

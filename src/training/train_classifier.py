@@ -174,6 +174,7 @@ class TrainingRunConfig:
     uncertain_weight: float = 1.0
     max_extra_sampling_multiplier: float = 2.0
     controlled_phase3: bool = False
+    cleaned_replay_enabled: bool = False
     baseline_name: str = ""
     baseline_checkpoint_path: str = ""
     locked_baseline_predictions_path: str = ""
@@ -184,9 +185,18 @@ class TrainingRunConfig:
     blocked_roi_pipeline_bug_rows_path: str = ""
     blocked_suspected_mislabel_rows_path: str = ""
     blocked_other_high_risk_rows_path: str = ""
+    approved_manifest_path: str = ""
+    auto_exclude_rows_path: str = ""
+    needs_adjudication_rows_path: str = ""
+    deferred_uncertain_rows_path: str = ""
+    decision_lock_summary_path: str = ""
     candidate_hypothesis: str = ""
     candidate_family: str = ""
     intended_tradeoff: str = ""
+    allow_test_labels: bool = False
+    public_leaderboard_input: bool = False
+    generate_submission: bool = False
+    apply_relabels: bool = False
 
 
 @dataclass(frozen=True)
@@ -422,6 +432,9 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     benchmark_cfg = raw.get("benchmark", {})
     hard_examples_cfg = raw.get("hard_examples", {})
     phase3_cfg = raw.get("phase3_controlled", {})
+    cleaned_replay_cfg = raw.get("cleaned_replay", {})
+    baseline_cfg = raw.get("baseline", {})
+    safety_cfg = raw.get("safety", {})
     config_name = Path(config_path).name
     is_v5 = bool(cfg.get("v5", False) or raw.get("v5", False) or "v5_strong_classifier" in config_name)
     is_v1r = bool("v1r_repaired_baseline" in Path(config_path).name or raw.get("v1r", False))
@@ -429,6 +442,7 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
     is_v2b_enhanced = bool("v2b_enhanced" in config_name)
     is_v2_2 = bool("v2_2_hard_examples" in config_name or raw.get("v2_2", False))
     is_controlled_phase3 = bool("phase3_controlled_training" in config_name or phase3_cfg.get("enabled", False))
+    is_cleaned_replay = bool("v2b_cleaned_replay_training" in config_name or cleaned_replay_cfg.get("enabled", False))
     if is_v5:
         cfg = {
             **cfg,
@@ -495,6 +509,27 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
             "weighted_sampler": cfg.get("weighted_sampler", training_cfg.get("weighted_sampler", True)),
             "augmentation_recipe": cfg.get("augmentation_recipe", training_cfg.get("augmentation_recipe", "v2_safe")),
             "hard_example_strategy": hard_examples_cfg.get("strategy", cfg.get("hard_example_strategy", "oversample")),
+        }
+    elif is_cleaned_replay:
+        cfg = {
+            **cfg,
+            "v2": True,
+            "experiment_name": experiment_cfg.get("name", cfg.get("experiment_name", "cleaned_replay_v2b")),
+            "seed": experiment_cfg.get("seed", cfg.get("seed")),
+            "dataset_root": data_cfg.get("dataset_root", cfg.get("dataset_root")),
+            "output_root": output_cfg.get("root", cfg.get("output_root")),
+            "split_source": data_cfg.get("split_source", cfg.get("split_source", "v2b_compatible")),
+            "model_name": cfg.get("model_name", model_cfg.get("model_name", "efficientnet_b1")),
+            "image_size": cfg.get("image_size", model_cfg.get("image_size", 384)),
+            "num_classes": cfg.get("num_classes", model_cfg.get("num_classes", 2)),
+            "batch_size": cfg.get("batch_size", training_cfg.get("batch_size", 4)),
+            "epochs": cfg.get("epochs", training_cfg.get("epochs", 3)),
+            "learning_rate": cfg.get("learning_rate", training_cfg.get("learning_rate", 0.001)),
+            "weight_decay": cfg.get("weight_decay", training_cfg.get("weight_decay", 0.01)),
+            "imbalance_strategy": cfg.get("imbalance_strategy", training_cfg.get("loss", "focal_loss_weighted_sampler")),
+            "weighted_sampler": cfg.get("weighted_sampler", training_cfg.get("weighted_sampler", True)),
+            "augmentation_recipe": cfg.get("augmentation_recipe", training_cfg.get("augmentation_recipe", "v2_safe")),
+            "hard_example_strategy": hard_examples_cfg.get("strategy", cfg.get("hard_example_strategy", "none")),
         }
     elif is_v5b or is_v2b_enhanced:
         default_experiment = "v2b_enhanced_448" if "448" in config_name else "v2b_enhanced_384"
@@ -589,19 +624,29 @@ def load_classifier_config(config_path: str | Path = "configs/classifier.yaml") 
         uncertain_weight=float(hard_examples_cfg.get("uncertain_weight", 1.0)),
         max_extra_sampling_multiplier=float(hard_examples_cfg.get("max_extra_sampling_multiplier", 2.0)),
         controlled_phase3=is_controlled_phase3,
-        baseline_name=str(phase3_cfg.get("baseline_name", "")),
-        baseline_checkpoint_path=str(phase3_cfg.get("baseline_checkpoint_path", "")),
-        locked_baseline_predictions_path=str(phase3_cfg.get("locked_baseline_predictions_path", "")),
-        locked_baseline_threshold_path=str(phase3_cfg.get("locked_baseline_threshold_path", "")),
-        locked_baseline_metrics_path=str(phase3_cfg.get("locked_baseline_metrics_path", "")),
-        locked_baseline_runtime_report_path=str(phase3_cfg.get("locked_baseline_runtime_report_path", "")),
+        cleaned_replay_enabled=is_cleaned_replay,
+        baseline_name=str((baseline_cfg if is_cleaned_replay else phase3_cfg).get("baseline_name", "")),
+        baseline_checkpoint_path=str((baseline_cfg if is_cleaned_replay else phase3_cfg).get("baseline_checkpoint_path", "")),
+        locked_baseline_predictions_path=str((baseline_cfg if is_cleaned_replay else phase3_cfg).get("locked_baseline_predictions_path", "")),
+        locked_baseline_threshold_path=str((baseline_cfg if is_cleaned_replay else phase3_cfg).get("locked_baseline_threshold_path", "")),
+        locked_baseline_metrics_path=str((baseline_cfg if is_cleaned_replay else phase3_cfg).get("locked_baseline_metrics_path", "")),
+        locked_baseline_runtime_report_path=str((baseline_cfg if is_cleaned_replay else phase3_cfg).get("locked_baseline_runtime_report_path", "")),
         approved_candidate_package_path=str(phase3_cfg.get("approved_candidate_package_path", "")),
         blocked_roi_pipeline_bug_rows_path=str(phase3_cfg.get("blocked_roi_pipeline_bug_rows_path", "")),
         blocked_suspected_mislabel_rows_path=str(phase3_cfg.get("blocked_suspected_mislabel_rows_path", "")),
         blocked_other_high_risk_rows_path=str(phase3_cfg.get("blocked_other_high_risk_rows_path", "")),
+        approved_manifest_path=str(cleaned_replay_cfg.get("approved_manifest_path", "")),
+        auto_exclude_rows_path=str(cleaned_replay_cfg.get("auto_exclude_rows_path", "")),
+        needs_adjudication_rows_path=str(cleaned_replay_cfg.get("needs_adjudication_rows_path", "")),
+        deferred_uncertain_rows_path=str(cleaned_replay_cfg.get("deferred_uncertain_rows_path", "")),
+        decision_lock_summary_path=str(cleaned_replay_cfg.get("decision_lock_summary_path", "")),
         candidate_hypothesis=str(phase3_cfg.get("candidate_hypothesis", "")),
         candidate_family=str(phase3_cfg.get("candidate_family", "")),
         intended_tradeoff=str(phase3_cfg.get("intended_tradeoff", "")),
+        allow_test_labels=bool(safety_cfg.get("allow_test_labels", False)),
+        public_leaderboard_input=bool(safety_cfg.get("public_leaderboard_input", False)),
+        generate_submission=bool(safety_cfg.get("generate_submission", False)),
+        apply_relabels=bool(safety_cfg.get("apply_relabels", False)),
     )
     _validate_training_config(config)
     return config
@@ -660,6 +705,27 @@ def _validate_common_training_config(config: TrainingRunConfig) -> None:
             raise TrainingValidationError("phase3_controlled.blocked_other_high_risk_rows_path is required")
         if not config.candidate_hypothesis:
             raise TrainingValidationError("phase3_controlled.candidate_hypothesis is required")
+    if config.cleaned_replay_enabled:
+        if not config.baseline_name:
+            raise TrainingValidationError("baseline.baseline_name is required")
+        if not config.approved_manifest_path:
+            raise TrainingValidationError("cleaned_replay.approved_manifest_path is required")
+        if not config.auto_exclude_rows_path:
+            raise TrainingValidationError("cleaned_replay.auto_exclude_rows_path is required")
+        if not config.needs_adjudication_rows_path:
+            raise TrainingValidationError("cleaned_replay.needs_adjudication_rows_path is required")
+        if not config.deferred_uncertain_rows_path:
+            raise TrainingValidationError("cleaned_replay.deferred_uncertain_rows_path is required")
+        if not config.decision_lock_summary_path:
+            raise TrainingValidationError("cleaned_replay.decision_lock_summary_path is required")
+        if config.allow_test_labels:
+            raise TrainingValidationError("safety.allow_test_labels must remain false")
+        if config.public_leaderboard_input:
+            raise TrainingValidationError("safety.public_leaderboard_input must remain false")
+        if config.generate_submission:
+            raise TrainingValidationError("safety.generate_submission must remain false")
+        if config.apply_relabels:
+            raise TrainingValidationError("safety.apply_relabels must remain false")
 
 
 def _validate_v2_training_config(config: TrainingRunConfig) -> None:
@@ -899,12 +965,30 @@ def run_training(
     if epochs is not None:
         active_config = _replace_config(active_config, epochs=epochs)
     _validate_training_config(active_config)
+    cleaned_replay_report_path: Optional[Path] = None
+    cleaned_replay_approved_ids: set[str] = set()
+    cleaned_replay_validation_payload: dict[str, object] = {}
+    if active_config.cleaned_replay_enabled:
+        cleaned_replay_report_path = run_cleaned_replay_dry_run_validation(
+            active_config,
+            dataset_root_override=dataset_root,
+            output_root_override=output_root,
+        )
+        cleaned_replay_validation_payload = json.loads(cleaned_replay_report_path.read_text(encoding="utf-8"))
+        cleaned_replay_approved_ids = _load_required_image_ids(
+            active_config.approved_manifest_path,
+            label="Cleaned replay approved manifest",
+        )
 
     set_reproducible_seed(active_config.seed)
     output_root = Path(output_root)
     _log("Training start")
     load_result = _load_training_examples_with_report(dataset_root)
     examples = load_result.examples
+    if active_config.cleaned_replay_enabled:
+        examples = [example for example in examples if example.image_id in cleaned_replay_approved_ids]
+        if not examples:
+            raise TrainingValidationError("Cleaned replay approved manifest removed all training examples")
     _log(f"resolved_dataset_root={load_result.resolved_dataset_root}")
     _log(f"train_csv_row_count={load_result.train_csv_row_count}")
     _log(f"train_image_count={load_result.train_image_count}")
@@ -1138,6 +1222,20 @@ def run_training(
     predictions_path = _resolve_output_path(output_root, predictions_output)
     for path in (model_path, metrics_path, threshold_path, label_distribution_path, split_distribution_path, predictions_path):
         path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned_replay_snapshot_path = output_root / "reports" / "approved_manifest_snapshot.csv"
+    cleaned_replay_run_manifest_path = output_root / "reports" / "cleaned_replay_run_manifest.json"
+    cleaned_replay_config_snapshot_path = output_root / "reports" / "cleaned_replay_config_snapshot.json"
+    cleaned_replay_runtime_path = output_root / "benchmarks" / "runtime_metadata.json"
+    cleaned_replay_comparison_path = output_root / "reports" / "cleaned_replay_comparison.json"
+    if active_config.cleaned_replay_enabled:
+        for path in (
+            cleaned_replay_snapshot_path,
+            cleaned_replay_run_manifest_path,
+            cleaned_replay_config_snapshot_path,
+            cleaned_replay_runtime_path,
+            cleaned_replay_comparison_path,
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.save(best_state, model_path)
     predictions = _build_predictions(split.validation, best_probs, best_threshold.threshold)
@@ -1278,6 +1376,66 @@ def run_training(
             threshold_path=threshold_path,
             runtime_seconds=runtime_seconds,
         )
+    if active_config.cleaned_replay_enabled:
+        approved_rows = _read_csv_rows(active_config.approved_manifest_path, required_columns=["image_id"])
+        with cleaned_replay_snapshot_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(approved_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(approved_rows)
+        cleaned_replay_config_snapshot_path.write_text(json.dumps(asdict(active_config), indent=2), encoding="utf-8")
+        cleaned_replay_runtime_path.write_text(
+            json.dumps(
+                {
+                    "runtime_seconds": runtime_seconds,
+                    "train_row_count": len(split.train),
+                    "validation_row_count": len(split.validation),
+                    "device": device.type,
+                    "model_name": selected_model_name,
+                    "synthetic_smoke": synthetic_smoke,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        cleaned_replay_run_manifest_path.write_text(
+            json.dumps(
+                {
+                    "spec_id": "018",
+                    "experiment_name": active_config.experiment_name,
+                    "approved_manifest_path": active_config.approved_manifest_path,
+                    "approved_manifest_count": len(cleaned_replay_approved_ids),
+                    "train_row_count": len(split.train),
+                    "validation_row_count": len(split.validation),
+                    "seed": active_config.seed,
+                    "split_source": active_config.split_source,
+                    "model_checkpoint_path": str(model_path),
+                    "validation_predictions_path": str(predictions_path),
+                    "best_threshold_path": str(threshold_path),
+                    "metrics_path": str(metrics_path),
+                    "config_snapshot_path": str(cleaned_replay_config_snapshot_path),
+                    "manifest_snapshot_path": str(cleaned_replay_snapshot_path),
+                    "runtime_metadata_path": str(cleaned_replay_runtime_path),
+                    "dry_run_report_path": "" if cleaned_replay_report_path is None else str(cleaned_replay_report_path),
+                    "safety": cleaned_replay_validation_payload,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        comparison_payload = build_cleaned_replay_comparison_record(
+            baseline_name=active_config.baseline_name,
+            baseline_checkpoint_path=active_config.baseline_checkpoint_path,
+            validation_predictions_path=active_config.locked_baseline_predictions_path,
+            best_threshold_path=active_config.locked_baseline_threshold_path,
+            metrics_path=active_config.locked_baseline_metrics_path,
+            runtime_report_path=active_config.locked_baseline_runtime_report_path,
+            cleaned_metrics_path=metrics_path,
+            cleaned_threshold_path=threshold_path,
+            cleaned_predictions_path=predictions_path,
+            cleaned_runtime_path=cleaned_replay_runtime_path,
+            dry_run_report_path=cleaned_replay_report_path if cleaned_replay_report_path is not None else cleaned_replay_run_manifest_path,
+        )
+        write_cleaned_replay_comparison_report(comparison_payload, cleaned_replay_comparison_path)
     _log(f"total_runtime_seconds={runtime_seconds:.2f}")
 
     return TrainingRunResult(
@@ -1455,6 +1613,140 @@ def validate_baseline_lock_targets(
     for baseline_path in baseline_paths:
         if baseline_path == candidate_root or candidate_root in baseline_path.parents or baseline_path in candidate_root.parents:
             raise TrainingValidationError("Candidate outputs must not overwrite or nest locked baseline artifacts")
+
+
+def validate_locked_baseline_artifacts(
+    *,
+    config: TrainingRunConfig,
+    candidate_output_root: str | Path,
+) -> LockedBaselineReport:
+    baseline_report = load_locked_baseline_report(
+        baseline_name=config.baseline_name,
+        baseline_checkpoint_path=config.baseline_checkpoint_path,
+        validation_predictions_path=config.locked_baseline_predictions_path,
+        best_threshold_path=config.locked_baseline_threshold_path,
+        metrics_path=config.locked_baseline_metrics_path,
+        runtime_report_path=config.locked_baseline_runtime_report_path,
+    )
+    validate_baseline_lock_targets(baseline_report, candidate_output_root=candidate_output_root)
+    return baseline_report
+
+
+def _load_required_image_ids(path: str | Path, *, label: str, allow_empty: bool = False) -> set[str]:
+    csv_path = Path(path)
+    if not csv_path.exists():
+        raise TrainingValidationError(f"{label} CSV not found: {csv_path}")
+    with csv_path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+        fieldnames = reader.fieldnames or []
+    if "image_id" not in fieldnames:
+        raise TrainingValidationError(f"{label} CSV must contain image_id column: {csv_path}")
+    image_ids = {str(row["image_id"]).strip() for row in rows if str(row["image_id"]).strip()}
+    if not image_ids and not allow_empty:
+        raise TrainingValidationError(f"{label} CSV contains no image_id rows: {csv_path}")
+    return image_ids
+
+
+def _fail_on_overlap(
+    primary_ids: set[str],
+    secondary_ids: set[str],
+    *,
+    overlap_label: str,
+) -> list[str]:
+    overlap = sorted(primary_ids & secondary_ids)
+    if overlap:
+        raise TrainingValidationError(f"Cleaned replay {overlap_label}: {', '.join(overlap[:10])}")
+    return overlap
+
+
+def _validate_cleaned_replay_dataset_membership(
+    approved_ids: set[str],
+    *,
+    train_csv: Path,
+    train_images_dir: Path,
+) -> tuple[list[str], list[str]]:
+    rows = _read_csv_rows(train_csv, required_columns=["image_id", "target"])
+    train_ids = {str(row["image_id"]).strip() for row in rows if str(row["image_id"]).strip()}
+    missing_labels = sorted(approved_ids - train_ids)
+    missing_images = sorted(image_id for image_id in approved_ids if not (train_images_dir / image_id).exists())
+    return missing_labels, missing_images
+
+
+def build_cleaned_replay_comparison_record(
+    *,
+    baseline_name: str,
+    baseline_checkpoint_path: str | Path,
+    validation_predictions_path: str | Path,
+    best_threshold_path: str | Path,
+    metrics_path: str | Path,
+    runtime_report_path: str | Path,
+    cleaned_metrics_path: str | Path,
+    cleaned_threshold_path: str | Path,
+    cleaned_predictions_path: str | Path,
+    cleaned_runtime_path: str | Path,
+    dry_run_report_path: str | Path,
+) -> dict[str, object]:
+    baseline_report = load_locked_baseline_report(
+        baseline_name=baseline_name,
+        baseline_checkpoint_path=baseline_checkpoint_path,
+        validation_predictions_path=validation_predictions_path,
+        best_threshold_path=best_threshold_path,
+        metrics_path=metrics_path,
+        runtime_report_path=runtime_report_path,
+    )
+    cleaned_metrics = json.loads(Path(cleaned_metrics_path).read_text(encoding="utf-8"))
+    cleaned_threshold = json.loads(Path(cleaned_threshold_path).read_text(encoding="utf-8"))
+    cleaned_predictions = _read_prediction_rows(cleaned_predictions_path)
+    dry_run_payload = json.loads(Path(dry_run_report_path).read_text(encoding="utf-8"))
+    safety_pass = (
+        dry_run_payload.get("validation_split_status") == "passed"
+        and not bool(dry_run_payload.get("training_started", False))
+        and bool(dry_run_payload.get("no_test_labels_used", True))
+        and bool(dry_run_payload.get("no_submission_created", True))
+        and bool(dry_run_payload.get("no_leaderboard_tuning", True))
+    )
+    cleaned_f1 = float(cleaned_metrics["f1_score"])
+    baseline_f1 = float(baseline_report.validation_f1)
+    f1_delta = round(cleaned_f1 - baseline_f1, 6)
+    if not safety_pass:
+        decision = "inconclusive"
+        reason = "Safety gate failed for cleaned replay dry-run validation."
+    elif cleaned_f1 > baseline_f1:
+        decision = "accepted"
+        reason = "Cleaned replay beats the locked V2B validation F1 and safety gates passed."
+    else:
+        decision = "rejected"
+        reason = "Cleaned replay did not beat the locked V2B validation F1."
+    return {
+        "baseline_name": baseline_report.baseline_name,
+        "baseline_validation_f1": baseline_f1,
+        "cleaned_replay_validation_f1": cleaned_f1,
+        "f1_delta": f1_delta,
+        "baseline_threshold": float(baseline_report.runtime_reference["best_threshold"]),
+        "cleaned_replay_threshold": float(cleaned_threshold["threshold"]),
+        "validation_row_count": len(cleaned_predictions),
+        "decision": decision,
+        "decision_reason": reason,
+        "safety_gate_status": "passed" if safety_pass else "failed",
+        "artifact_paths": {
+            "baseline_predictions": str(validation_predictions_path),
+            "cleaned_predictions": str(cleaned_predictions_path),
+            "baseline_metrics": str(metrics_path),
+            "cleaned_metrics": str(cleaned_metrics_path),
+            "baseline_threshold": str(best_threshold_path),
+            "cleaned_threshold": str(cleaned_threshold_path),
+            "cleaned_runtime": str(cleaned_runtime_path),
+            "dry_run_report": str(dry_run_report_path),
+        },
+    }
+
+
+def write_cleaned_replay_comparison_report(payload: dict[str, object], output_path: str | Path) -> Path:
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return output
 
 
 def validate_candidate_hypothesis(record: CandidateHypothesisRecord) -> None:
@@ -1955,6 +2247,87 @@ def run_phase3_dry_run_validation(
     return report_path
 
 
+def run_cleaned_replay_dry_run_validation(
+    config_or_path: TrainingRunConfig | str | Path,
+    *,
+    dataset_root_override: str | Path | None = None,
+    output_root_override: str | Path | None = None,
+) -> Path:
+    config = config_or_path if isinstance(config_or_path, TrainingRunConfig) else load_classifier_config(config_or_path)
+    if not config.cleaned_replay_enabled:
+        raise TrainingValidationError("Cleaned replay dry-run requires a cleaned replay config")
+
+    dataset_root = Path(dataset_root_override) if dataset_root_override is not None else Path(config.dataset_root)
+    if not config.dataset_root and dataset_root_override is None:
+        raise TrainingValidationError("Cleaned replay dry-run requires data.dataset_root")
+    if not dataset_root.exists():
+        raise TrainingValidationError(f"Cleaned replay dataset root not found: {dataset_root}")
+    train_csv = dataset_root / "train.csv"
+    train_images_dir = dataset_root / "train_images"
+    if not train_csv.exists():
+        raise TrainingValidationError(f"Cleaned replay dry-run requires train.csv: {train_csv}")
+    if not train_images_dir.exists():
+        raise TrainingValidationError(f"Cleaned replay dry-run requires train_images directory: {train_images_dir}")
+
+    approved_ids = _load_required_image_ids(config.approved_manifest_path, label="Cleaned replay approved manifest")
+    auto_exclude_ids = _load_required_image_ids(config.auto_exclude_rows_path, label="Cleaned replay auto-exclude", allow_empty=True)
+    adjudication_ids = _load_required_image_ids(
+        config.needs_adjudication_rows_path,
+        label="Cleaned replay needs-adjudication",
+        allow_empty=True,
+    )
+    deferred_ids = _load_required_image_ids(config.deferred_uncertain_rows_path, label="Cleaned replay deferred", allow_empty=True)
+    decision_lock_summary = Path(config.decision_lock_summary_path)
+    if not decision_lock_summary.exists():
+        raise TrainingValidationError(f"Cleaned replay decision summary not found: {decision_lock_summary}")
+
+    _fail_on_overlap(approved_ids, auto_exclude_ids, overlap_label="auto-excluded overlap")
+    _fail_on_overlap(approved_ids, adjudication_ids, overlap_label="needs-adjudication overlap")
+    _fail_on_overlap(approved_ids, deferred_ids, overlap_label="deferred overlap")
+
+    missing_labels, missing_images = _validate_cleaned_replay_dataset_membership(
+        approved_ids,
+        train_csv=train_csv,
+        train_images_dir=train_images_dir,
+    )
+    if missing_labels:
+        raise TrainingValidationError("Cleaned replay missing approved training labels: " + ", ".join(missing_labels[:10]))
+    if missing_images:
+        raise TrainingValidationError("Cleaned replay missing approved training images: " + ", ".join(missing_images[:10]))
+
+    baseline_report = validate_locked_baseline_artifacts(config=config, candidate_output_root=output_root_override or config.output_root or "outputs")
+    output_root = Path(output_root_override) if output_root_override is not None else Path(config.output_root or "outputs")
+    report_path = output_root / "reports" / "cleaned_replay_dry_run_validation.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "spec_id": "018",
+        "config_path": str(config_or_path) if not isinstance(config_or_path, TrainingRunConfig) else config.experiment_name,
+        "approved_manifest_path": config.approved_manifest_path,
+        "approved_manifest_count": len(approved_ids),
+        "auto_exclude_overlap_count": 0,
+        "needs_adjudication_overlap_count": 0,
+        "deferred_overlap_count": 0,
+        "missing_train_label_count": 0,
+        "missing_train_image_count": 0,
+        "baseline_artifacts_available": True,
+        "validation_split_status": "passed",
+        "training_started": False,
+        "no_test_labels_used": not config.allow_test_labels,
+        "no_leaderboard_tuning": not config.public_leaderboard_input,
+        "no_submission_created": not config.generate_submission,
+        "warnings": [],
+        "baseline_name": baseline_report.baseline_name,
+        "dataset_root": str(dataset_root),
+        "train_csv": str(train_csv),
+        "train_images_dir": str(train_images_dir),
+        "decision_lock_summary_path": str(decision_lock_summary),
+        "output_root": str(output_root),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return report_path
+
+
 def build_weighted_random_sampler(
     examples: Sequence[TrainingExample],
     *,
@@ -2114,6 +2487,8 @@ def _is_v2_2_config(config: TrainingRunConfig) -> bool:
 
 
 def _default_model_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.cleaned_replay_enabled:
+        return Path("outputs/kaggle_v2b_cleaned_replay/cleaned_replay_v2b/models/classifier_best.pth")
     if config.v5:
         return V5_MODEL_OUTPUT
     if _is_v2_2_config(config):
@@ -2124,6 +2499,8 @@ def _default_model_output_for_config(config: TrainingRunConfig) -> Path:
 
 
 def _default_metrics_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.cleaned_replay_enabled:
+        return Path("outputs/kaggle_v2b_cleaned_replay/cleaned_replay_v2b/reports/classifier_metrics.json")
     if config.v5:
         return V5_METRICS_OUTPUT
     if _is_v2_2_config(config):
@@ -2134,6 +2511,8 @@ def _default_metrics_output_for_config(config: TrainingRunConfig) -> Path:
 
 
 def _default_threshold_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.cleaned_replay_enabled:
+        return Path("outputs/kaggle_v2b_cleaned_replay/cleaned_replay_v2b/reports/best_threshold.json")
     if config.v5:
         return V5_THRESHOLD_OUTPUT
     if _is_v2_2_config(config):
@@ -2144,6 +2523,8 @@ def _default_threshold_output_for_config(config: TrainingRunConfig) -> Path:
 
 
 def _default_predictions_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.cleaned_replay_enabled:
+        return Path("outputs/kaggle_v2b_cleaned_replay/cleaned_replay_v2b/predictions/val_classifier_predictions.csv")
     if config.v5:
         return V5_PREDICTIONS_OUTPUT
     if _is_v2_2_config(config):
@@ -2154,6 +2535,8 @@ def _default_predictions_output_for_config(config: TrainingRunConfig) -> Path:
 
 
 def _default_comparison_output_for_config(config: TrainingRunConfig) -> Path:
+    if config.cleaned_replay_enabled:
+        return Path("outputs/kaggle_v2b_cleaned_replay/cleaned_replay_v2b/reports/cleaned_replay_comparison.json")
     if _is_v2_2_config(config):
         return V2_2_COMPARISON_OUTPUT
     return V2_COMPARISON_OUTPUT
@@ -2252,6 +2635,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--dry-run-phase3", action="store_true")
+    parser.add_argument("--dry-run-cleaned-replay", action="store_true")
     parser.add_argument("--synthetic-smoke", action="store_true")
     parser.add_argument("--epochs", "--max-epochs", dest="epochs", type=int, default=None)
     parser.add_argument("--max-train-samples", type=int, default=None)
@@ -2282,6 +2666,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             output_root_override=args.output_root,
         )
         print(f"Phase 3 dry-run validation complete: {report_path}")
+        return 0
+    if args.dry_run_cleaned_replay:
+        report_path = run_cleaned_replay_dry_run_validation(
+            args.config,
+            dataset_root_override=args.dataset_root,
+            output_root_override=args.output_root,
+        )
+        print(f"Cleaned replay dry-run validation complete: {report_path}")
         return 0
     dataset_root = args.dataset_root or config.dataset_root
     if not dataset_root:
